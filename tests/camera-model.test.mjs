@@ -51,9 +51,20 @@ test('uses the official privacy-enhanced embed with an origin/referrer-compatibl
 
 test('tall portrait screens reserve log space while retaining 400px of native warnings',()=>{
   const tall=cameraLayout({width:390,height:844,expanded:true,hasEvent:true});
-  assert.ok(tall.bottom>=390);assert.ok(844-26-tall.bottom>=400);
+  assert.equal(tall.bottom,358);assert.ok(844-26-tall.bottom-60>=400);
   const short=cameraLayout({width:390,height:700,expanded:true,hasEvent:true});
-  assert.equal(short.bottom,310);assert.ok(700-26-short.bottom>=350);
+  assert.equal(short.mode,'compact');assert.equal(short.bottom,106);assert.ok(700-26-short.bottom-60>=330);
   const veryTall=cameraLayout({width:390,height:1200,expanded:true,hasEvent:true});
   assert.equal(veryTall.bottom,470);
+});
+
+test('narrow cameras keep a separate 60px report log and the native 330px/400px minimum',()=>{
+  const small=cameraLayout({width:390,height:470,expanded:true,hasEvent:true});
+  assert.equal(small.mode,'compact');assert.equal(small.bottom,54);
+  assert.equal(470-26-small.bottom-60,330);
+  const boundary=cameraLayout({width:390,height:806,expanded:true,hasEvent:true});
+  assert.equal(boundary.mode,'bottom');assert.equal(boundary.bottom,320);
+  assert.equal(806-26-boundary.bottom-60,400);
+  const below=cameraLayout({width:390,height:805,expanded:true,hasEvent:true});
+  assert.equal(below.mode,'compact');assert.equal(below.video,false);
 });

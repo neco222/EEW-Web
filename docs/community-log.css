@@ -1,0 +1,34 @@
+/* Reports keep their own space when video is closed, expired or unavailable. */
+.eew-report-log,.eew-report-log *{box-sizing:border-box}
+.eew-report-log{position:fixed;z-index:21;display:flex;flex-direction:column;min-height:0;background:#101923;color:#e8f2fa;font:11px/1.4 system-ui,-apple-system,"BIZ UDPGothic",sans-serif;overflow:hidden;border-top:1px solid #617c9038}
+.eew-report-log[hidden],.eew-report-log [hidden]{display:none!important}
+body.eew-log-side #app,body.eew-log-side #loading,body.eew-log-side #error,body.eew-log-side #launch{width:calc(100% - 336px);height:calc(100% - 26px)}
+body.eew-log-side .eew-report-log{right:0;top:var(--eew-log-top,0px);bottom:26px;width:336px;border-left:1px solid #5d7c9440}
+body.eew-log-side .eew-camera-panel{bottom:auto;height:auto;max-height:calc(100% - 116px);overflow:auto}
+body.eew-log-side.eew-camera-side.eew-community-details .eew-camera-panel{height:auto;overflow:auto}
+body.eew-log-side.eew-community-details .eew-community-body{top:var(--eew-log-top,0px);width:336px;bottom:26px}
+body.eew-log-bottom #app,body.eew-log-bottom #loading,body.eew-log-bottom #error,body.eew-log-bottom #launch{width:100%;height:calc(100% - 26px - var(--eew-log-bottom))}
+body.eew-log-bottom .eew-report-log{left:0;right:0;bottom:26px;height:var(--eew-log-height)}
+body.eew-log-bottom.eew-camera-bottom .eew-camera-panel,body.eew-log-bottom.eew-camera-compact .eew-camera-panel{bottom:calc(26px + var(--eew-log-height))}
+body.eew-log-inline .eew-report-log{position:relative;top:auto;right:auto;bottom:auto;width:100%;height:130px;min-height:90px;margin-bottom:10px;border:1px solid #617c9038;border-radius:5px}
+.eew-report-log-heading{height:28px;min-height:24px;flex:none;display:flex;align-items:center;gap:7px;padding:0 10px}
+.eew-report-log-heading h2{flex:1;margin:0;font-size:12px;font-weight:650;white-space:nowrap}
+.eew-report-log-status{font-size:10px;color:#e1c384;white-space:nowrap}
+.eew-report-log[data-connection="live"] .eew-report-log-status,.eew-report-log[data-connection="shared"] .eew-report-log-status{color:#a0dfc4}
+.eew-report-log-summary{height:22px;flex:none;padding:0 10px 4px;font-size:10px;color:#9eb5c7}
+.eew-report-log-follow{padding:1px 4px;color:#d4e3ee;background:#263747;border:1px solid #496074;border-radius:4px;cursor:pointer;font:9px system-ui,sans-serif;white-space:nowrap}
+.eew-report-log-rows{position:relative;min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4d697a transparent;list-style:none;padding:0;margin:0}
+.eew-report-log-row{display:grid;grid-template-columns:54px minmax(0,1fr)32px;align-items:center;gap:6px;min-height:32px;padding:6px 10px;border-top:1px solid #b9d0df0c}
+.eew-report-log-row time{font-size:10px;font-variant-numeric:tabular-nums;color:#8fa9bc}
+.eew-report-log-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dcebf6;font-size:11px}
+.eew-report-log-row small{font-size:9px;text-align:right;color:#91d7ba;white-space:nowrap}
+.eew-report-log-row[data-history="true"] small{color:#8fa9bc}
+.eew-report-log-row.is-new{animation:eew-report-arrival 1.2s ease-out}
+.eew-report-log-empty{margin:0;padding:10px;color:#8fa9bc;font-size:11px;overflow:hidden}
+.eew-report-log.is-compact .eew-report-log-heading{height:24px}
+.eew-report-log.is-compact .eew-report-log-summary{display:none}
+.eew-report-log.is-compact .eew-report-log-empty{padding:3px 10px}
+.eew-report-log :focus-visible{outline:2px solid #bce8f4;outline-offset:-2px}
+@keyframes eew-report-arrival{from{background:#579e9b40}to{background:transparent}}
+@media(max-width:959px),(max-height:499px){body.eew-log-inline #app,body.eew-log-inline #loading,body.eew-log-inline #error,body.eew-log-inline #launch{width:100%;height:calc(100% - 26px - var(--eew-log-bottom))}body.eew-log-inline .eew-community-body{top:auto;left:0;right:0;bottom:26px;width:100%;height:var(--eew-log-bottom)}}
+@media(prefers-reduced-motion:reduce){.eew-report-log-row.is-new{animation:none}}

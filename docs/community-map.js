@@ -13,21 +13,27 @@ export function startCommunityMapFollow({enabled = true, now = Date.now,
   read = readView, control = readMapControl, pan = panCommunityFocus, cancelPan = cancelCommunityFocus,
   focus = new CommunityFocus({now}), schedule = globalThis.setTimeout,
   cancel = globalThis.clearTimeout, onMove = () => {}} = {}) {
-  let running = true, stopped = false, timer = null, manualUntil = -Infinity;
+  let running = true, stopped = false, timer = null, manualUntil = -Infinity, layoutReadyAt = -Infinity;
+  let blockedReason = null;
   const pointers = new Set();
   const listeners = [];
 
   function discard() {
     if (timer !== null) cancel(timer);
     timer = null;
+    layoutReadyAt = -Infinity;
     focus.clear();
   }
   function interrupt() {
     try {cancelPan(vm());} catch { /* A replaced native project owns its camera. */ }
     discard();
   }
+  function active() {
+    return !(stopped || !running || !enabled || doc?.hidden || pointers.size || now() < manualUntil);
+  }
   function context() {
-    if (stopped || !running || !enabled || doc?.hidden || pointers.size || now() < manualUntil) return null;
+    blockedReason = null;
+    if (!active()) return null;
     if (['loading','error','launch'].some(id => {
       const node = doc?.getElementById?.(id);
       return node && !node.hidden;
@@ -35,6 +41,7 @@ export function startCommunityMapFollow({enabled = true, now = Date.now,
     try {
       const machine = vm(), view = read(machine, scaffolding());
       const state = control(machine, view, now());
+      blockedReason = state?.reason ?? null;
       return state?.ready && !state.blocked ? {machine, view} : null;
     } catch { return null; } // A changed/unready native project stays in charge.
   }
@@ -42,7 +49,7 @@ export function startCommunityMapFollow({enabled = true, now = Date.now,
     if (timer !== null || stopped || !running || !enabled) return;
     const state = focus.snapshot();
     if (!state.pendingCount || !Number.isFinite(state.readyAt)) return;
-    timer = schedule(tick, Math.max(0, state.readyAt - now()));
+    timer = schedule(tick, Math.max(0, Math.max(state.readyAt, layoutReadyAt) - now()));
   }
   function tick() {
     timer = null;
@@ -59,6 +66,16 @@ export function startCommunityMapFollow({enabled = true, now = Date.now,
   function manual() {
     manualUntil = now() + COMMUNITY_MANUAL_HOLD_MS;
     interrupt();
+  }
+  function layout(event) {
+    if (event?.detail?.source !== 'camera-reservation') {interrupt();return;}
+    // Video and this map can be triggered by the same report. Its geographic
+    // target survives the camera shelf opening; queued work waits for the
+    // resized native geometry, then rechecks all warning/manual priorities.
+    if (timer !== null) cancel(timer);
+    timer = null;
+    layoutReadyAt = now() + 300;
+    arm();
   }
   function inViewer(event) {
     return Boolean(event.target?.closest?.('#app') || event.composedPath?.().some(node => node?.id === 'app'));
@@ -89,13 +106,19 @@ export function startCommunityMapFollow({enabled = true, now = Date.now,
   listen(doc, 'wheel', event => {if(inViewer(event))manual();}, {capture:true,passive:true});
   listen(doc, 'keydown', key, true);
   listen(doc, 'visibilitychange', () => {pointers.clear();interrupt();});
-  listen(doc, 'eew-layout-change', interrupt);
+  listen(doc, 'eew-layout-change', layout);
   listen(events, 'resize', interrupt);
   listen(events, 'blur', () => {pointers.clear();interrupt();});
 
   return {
     ingestLive(next, detail) {
-      if (!context()) {discard();return {accepted:false,reason:'native-priority'};}
+      if (!context()) {
+        // Keep an already accepted batch through this camera-only reflow, but
+        // reject new intake until the native geometry is usable. Other native
+        // priorities still discard it immediately, even during that short wait.
+        if (now() < layoutReadyAt && active() && blockedReason === 'layout-unsettled') return {accepted:false,reason:'layout-settling'};
+        discard();return {accepted:false,reason:'native-priority'};
+      }
       const result = focus.ingestLive(next, detail);
       arm();
       return result;

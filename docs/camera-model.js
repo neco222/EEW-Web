@@ -6,7 +6,7 @@ export const CAMERA_SHELF_HEIGHT = 310;
 const position = value => value && typeof value.lat === 'number' && typeof value.lon === 'number' &&
   Number.isFinite(value.lat) && Number.isFinite(value.lon) && Math.abs(value.lat) <= 90 && Math.abs(value.lon) <= 180;
 
-/** Great-circle distance. Both endpoints are public earthquake/camera locations. */
+/** Great-circle distance between public quake, report-region or camera points. */
 export function distanceKm(a, b) {
   if (!position(a) || !position(b)) return Infinity;
   const rad = Math.PI / 180;
@@ -36,11 +36,12 @@ export function cameraLayout({width, height, expanded, communityDetails = false,
   // A narrow community drawer gets priority. Opening camera again closes that
   // drawer through its normal details/toggle event rather than stacking panels.
   if (communityDetails) return {mode: 'off', side: 0, bottom: 0, video: false};
-  if (width >= 320 && height >= 690) return {mode: 'bottom', side: 0,
-    bottom: Math.max(CAMERA_SHELF_HEIGHT,Math.min(470,height-26-400)), video: hasEvent};
+  // The independent report log also reserves at least 60px on narrow screens.
+  if (width >= 320 && height >= 806) return {mode: 'bottom', side: 0,
+    bottom: Math.max(CAMERA_SHELF_HEIGHT,Math.min(470,height-26-400-60)), video: hasEvent};
   // A 200px-high YouTube player would consume the warning/history area here.
   // Keep a source link and controls, and do not create a hidden background video.
-  return {mode: 'compact', side: 0, bottom: Math.min(106, Math.max(0, height - 350)), video: false};
+  return {mode: 'compact', side: 0, bottom: Math.min(106, Math.max(0, height - 26 - 330 - 60)), video: false};
 }
 
 export function youtubeEmbedURL(videoId, origin) {

@@ -41,23 +41,5 @@ body.eew-camera-compact .eew-camera-meta{height:22px}
 body.eew-camera-compact .eew-camera-controls{height:28px}
 body.eew-camera-bottom .eew-camera-description,body.eew-camera-compact .eew-camera-description{display:none}
 body.eew-camera-bottom .eew-camera-heading{height:31px}
-.eew-camera-log{display:flex;flex:1;min-height:0;flex-direction:column;border-top:1px solid #617c9038;background:#101923}
-.eew-camera-panel[data-log-space="false"] .eew-camera-log,body.eew-camera-side.eew-community-details .eew-camera-log{display:none}
-.eew-camera-log-heading{height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px}
-.eew-camera-log-heading h3{flex:1;margin:0;font-size:12px;font-weight:650}
-.eew-camera-log-status{font-size:10px;color:#e1c384;white-space:nowrap}
-.eew-camera-log[data-connection="live"] .eew-camera-log-status,.eew-camera-log[data-connection="shared"] .eew-camera-log-status{color:#a0dfc4}
-.eew-camera-log-summary{min-height:24px;flex:none;display:flex;justify-content:space-between;align-items:center;gap:5px;padding:0 10px 4px;font-size:10px;color:#9eb5c7}
-.eew-camera-log-follow{font-size:10px!important;padding:1px 5px!important}
-.eew-camera-log-rows{position:relative;min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4d697a transparent;list-style:none;padding:0;margin:0}
-.eew-camera-log-row{display:grid;grid-template-columns:54px minmax(0,1fr)32px;align-items:center;gap:6px;min-height:32px;padding:6px 10px;border-top:1px solid #b9d0df0c}
-.eew-camera-log-row time{font-size:10px;font-variant-numeric:tabular-nums;color:#8fa9bc}
-.eew-camera-log-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dcebf6;font-size:11px}
-.eew-camera-log-row small{font-size:9px;text-align:right;color:#91d7ba;white-space:nowrap}
-.eew-camera-log-row[data-history="true"] small{color:#8fa9bc}
-.eew-camera-log-row.is-new{animation:eew-camera-log-arrival 1.2s ease-out}
-.eew-camera-log-empty{margin:0;padding:14px 10px;color:#8fa9bc;font-size:11px}
-@keyframes eew-camera-log-arrival{from{background:#579e9b40}to{background:transparent}}
 body.eew-camera-compact .eew-camera-panel{display:block;overflow:auto}
-@media(prefers-reduced-motion:reduce){.eew-camera-log-row.is-new{animation:none}}
 @media(max-width:355px){body.eew-camera-enabled .eew-community-window{display:none}.eew-camera-heading label{font-size:9px}.eew-camera-heading{gap:4px}}

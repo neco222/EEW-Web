@@ -1,6 +1,7 @@
 import { CommunityStore } from './community-core.js';
 import { CommunityFeed } from './community-feed.js';
 import { CommunityLog } from './community-log.js';
+import { startCommunityLogView } from './community-log-view.js';
 import { startCommunityMapFollow } from './community-map.js';
 import { CommunityPulses, formatPulseCount } from './community-pulses.js';
 import { readView } from './viewer-bridge.js';
@@ -103,6 +104,7 @@ export function startCommunity() {
   }
   const requestLog = () => publishLog(true);
   document.addEventListener('eew-community-log-request', requestLog);
+  const logView = startCommunityLogView({detailsBody:host.querySelector('.eew-community-body')});
 
   function relayout() {
     // Packager resizes its canvas synchronously; Scratch's map/layout lists
@@ -273,7 +275,10 @@ export function startCommunity() {
     onStatus: (next) => { status = next; updatePanel(); queueLog(); },
     onLive: (next, detail) => { log.ingestLive(next, detail);queueLog();
       // Feed acceptance defines a new post; the bounded display log may be full.
-      if (detail.message?.code === 561) mapFollow.ingestLive(next, detail);
+      if (detail.message?.code === 561) {
+        mapFollow.ingestLive(next, detail);
+        document.dispatchEvent(new CustomEvent('eew-community-report', {detail:{message:detail.message,receivedAt:detail.receivedAt}}));
+      }
       if (enabled) pulses.ingestLive(next, detail); wake(); },
     onHistory: (messages) => {log.ingestHistory(messages);queueLog();},
   });
@@ -288,7 +293,10 @@ export function startCommunity() {
   });
   refreshButton.addEventListener('click', () => feed?.refresh());
   details.addEventListener('toggle', () => {
-    document.body.classList.toggle('eew-community-details', details.open); relayout(); wake();
+    document.body.classList.toggle('eew-community-details', details.open);
+    // An explicit drawer action keeps its normal map priority even when the
+    // desktop log already reserves the same width (no geometry change).
+    document.dispatchEvent(new CustomEvent('eew-layout-change',{detail:{source:'community-details'}}));
   });
   const visibility = () => { if (document.hidden) { clearTimeout(timer); timer = null;clearTimeout(logTimer);logTimer = null; clearVisuals(); } else {wake();queueLog();} };
   const resize = () => { relayout(); wake(); };
@@ -314,6 +322,7 @@ export function startCommunity() {
     stop() {
       if (disposed) return;
       disposed = true; pause();
+      logView.stop();
       mapFollow.stop();
       document.removeEventListener('visibilitychange', visibility);
       document.removeEventListener('eew-layout-change', resize);

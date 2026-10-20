@@ -12,12 +12,14 @@ function target() {
   };
 }
 function fixture() {
-  let now = Date.UTC(2026,9,20), serial = 0, timerId = 0, blocked = false, rejectPan = false;
-  const timers = new Map(), moves = [], doc = target(), events = target();
+  let now = Date.UTC(2026,9,20), serial = 0, timerId = 0, rejectPan = false, activePan = null;
+  const native = {ready:true,blocked:false,reason:null};
+  const timers = new Map(), moves = [], cancellations = [], doc = target(), events = target();
   const app = {id:'app'}, canvas = {tagName:'CANVAS',closest:()=>app}, body = {tagName:'BODY'};
   doc.hidden = false;doc.getElementById = () => ({hidden:true});
   const follower = startCommunityMapFollow({doc,events,now:()=>now,vm:()=>({}),scaffolding:()=>({}),read:()=>({}),
-    control:()=>({ready:true,blocked}),pan:(next)=>{if(rejectPan)return {moved:false,reason:'native-priority'};moves.push(next);return {moved:true};},
+    control:()=>({...native}),pan:(next)=>{if(rejectPan)return {moved:false,reason:'native-priority'};moves.push(next);activePan=next;return {moved:true};},
+    cancelPan:()=>{cancellations.push(activePan);const cancelled=Boolean(activePan);activePan=null;return {cancelled};},
     schedule:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,at:now+delay});return id;},cancel:id=>timers.delete(id)});
   function post(area = 10) {
     const message={code:561,id:`report-${++serial}`,uid:`user-${serial}`,time:new Date(now).toISOString(),area};
@@ -32,8 +34,12 @@ function fixture() {
     }
     throw new Error('Unexpected busy timer loop');
   }
-  return {follower,post,advance,moves,timers,doc,events,canvas,body,
-    block:value=>{blocked=value;},rejectPan:value=>{rejectPan=value;}};
+  return {follower,post,advance,moves,timers,cancellations,doc,events,canvas,body,
+    get activePan(){return activePan;},
+    cameraResize:()=>doc.fire('eew-layout-change',{detail:{source:'camera-reservation'}}),
+    native:value=>Object.assign(native,value),
+    block:(value,reason='native-priority')=>{native.blocked=value;native.reason=value?reason:null;},
+    rejectPan:value=>{rejectPan=value;}};
 }
 
 test('one live report moves after the short batch and leaves no idle timer',()=>{
@@ -91,6 +97,104 @@ test('layout changes, resize and visibility discard pre-transition reports',()=>
   for(const [surface,event] of [['doc','eew-layout-change'],['events','resize'],['doc','visibilitychange']]) {
     const f=fixture();f.post();f[surface].fire(event);f.advance(5000);
     assert.equal(f.moves.length,0,event);assert.equal(f.timers.size,0,event);f.follower.stop();
+  }
+});
+
+test('opening a report camera preserves an already submitted geographic pan without an idle timer',()=>{
+  const f=fixture();f.post();f.advance(400);
+  const submitted=f.activePan;
+  assert.ok(submitted);
+  f.cameraResize();f.cameraResize();
+  assert.equal(f.activePan,submitted,'the automatic shelf does not cancel the world-coordinate target');
+  assert.equal(f.cancellations.length,0);assert.equal(f.timers.size,0);
+  f.advance(5000);assert.equal(f.moves.length,1);assert.equal(f.activePan,submitted);
+  f.follower.stop();assert.equal(f.activePan,null);assert.equal(f.cancellations.length,1);
+});
+
+test('a camera reservation defers pending focus for geometry settling and keeps just one timer',()=>{
+  const f=fixture();f.post();f.advance(350);f.cameraResize();
+  assert.equal(f.timers.size,1);
+  f.advance(50);assert.equal(f.moves.length,0,'the original 400ms deadline was deferred');
+  f.advance(249);assert.equal(f.moves.length,0);
+  f.advance(1);assert.equal(f.moves.length,1);assert.equal(f.moves[0].count,1);
+  assert.equal(f.timers.size,0);assert.equal(f.cancellations.length,0);f.follower.stop();
+});
+
+test('camera settling never shortens the original batch or the three-second movement interval',()=>{
+  const f=fixture();f.cameraResize();f.post();
+  f.advance(399);assert.equal(f.moves.length,0);
+  f.advance(1);assert.equal(f.moves.length,1);
+  f.post(60);f.cameraResize();
+  assert.equal(f.timers.size,1);
+  f.advance(2999);assert.equal(f.moves.length,1);
+  f.advance(1);assert.equal(f.moves.length,2);assert.equal(f.moves[1].areas[0].code,60);
+  assert.equal(f.timers.size,0);f.follower.stop();
+});
+
+test('unsettled geometry rejects new reports while preserving the valid pre-resize candidate',()=>{
+  const f=fixture();f.post(10);f.advance(200);f.cameraResize();
+  f.native({ready:false,blocked:true,reason:'layout-unsettled'});
+  assert.deepEqual(f.post(60),{accepted:false,reason:'layout-settling'});
+  assert.equal(f.timers.size,1);
+  f.advance(100);f.native({ready:true,blocked:false,reason:null});
+  f.advance(199);assert.equal(f.moves.length,0);
+  f.advance(1);assert.equal(f.moves.length,1);
+  assert.deepEqual(f.moves[0].areas.map(area=>area.code),[10]);assert.equal(f.moves[0].count,1);
+  assert.equal(f.timers.size,0);f.follower.stop();
+});
+
+test('native priority at intake still drops reports and prior candidates during camera settling',()=>{
+  for(const reason of ['eew-active','tsunami-active','history','manual-hold','native-moving']){
+    const f=fixture();f.post();f.advance(100);f.cameraResize();f.block(true,reason);
+    assert.equal(f.post(60).accepted,false,reason);
+    f.block(false);f.advance(5000);
+    assert.equal(f.moves.length,0,reason);assert.equal(f.timers.size,0,reason);
+    f.post(70);f.advance(400);assert.equal(f.moves.length,1);assert.equal(f.moves[0].areas[0].code,70);
+    f.follower.stop();
+  }
+});
+
+test('native priority is checked again after a deferred camera reservation and never replayed later',()=>{
+  const f=fixture();f.post();f.advance(200);f.cameraResize();
+  f.advance(100);f.block(true,'eew-active');f.advance(200);
+  assert.equal(f.moves.length,0);assert.equal(f.timers.size,0);
+  f.block(false);f.advance(5000);assert.equal(f.moves.length,0);
+  f.post(70);f.advance(400);assert.equal(f.moves.length,1);f.follower.stop();
+});
+
+test('repeated camera reservations cannot renew the original five-second report freshness',()=>{
+  const f=fixture();f.post();
+  for(let step=0;step<20;step++){
+    f.advance(250);f.cameraResize();assert.ok(f.timers.size<=1);
+  }
+  assert.equal(f.moves.length,0);assert.equal(f.timers.size,0);
+  f.advance(1000);assert.equal(f.moves.length,0);
+  f.post(60);f.advance(400);assert.equal(f.moves.length,1);assert.equal(f.moves[0].areas[0].code,60);
+  f.follower.stop();
+});
+
+test('manual, ordinary layout, visibility and lifecycle interruptions still cancel a submitted pan',()=>{
+  const actions={
+    wheel:f=>f.doc.fire('wheel',{target:f.canvas}),
+    drag:f=>f.doc.fire('pointerdown',{target:f.canvas,pointerId:1}),
+    key:f=>f.doc.fire('keydown',{target:f.body,key:'z'}),
+    details:f=>f.doc.fire('eew-layout-change',{detail:{source:'community-details'}}),
+    ordinaryLayout:f=>f.doc.fire('eew-layout-change'),
+    unknownSource:f=>f.doc.fire('eew-layout-change',{detail:{source:'other-layout'}}),
+    resize:f=>f.events.fire('resize'),
+    visibility:f=>{f.doc.hidden=true;f.doc.fire('visibilitychange');},
+    blur:f=>f.events.fire('blur'),
+    disable:f=>f.follower.setEnabled(false),
+    pause:f=>f.follower.pause(),
+    stop:f=>f.follower.stop(),
+  };
+  for(const [name,interrupt] of Object.entries(actions)){
+    const f=fixture();f.post();f.advance(400);f.post(60);f.cameraResize();
+    assert.ok(f.activePan,name);assert.equal(f.timers.size,1,name);
+    interrupt(f);assert.equal(f.activePan,null,name);
+    assert.equal(f.cancellations.filter(Boolean).length,1,name);assert.equal(f.timers.size,0,name);
+    f.cameraResize();f.advance(5000);assert.equal(f.moves.length,1,name);assert.equal(f.timers.size,0,name);
+    f.follower.stop();
   }
 });
 
