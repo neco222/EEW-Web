@@ -1,8 +1,9 @@
-/** One reservation shared by cameras and reports; nothing floats over the map. */
-export function communityLogLayout({width, height, cameraBottom = 0, cameraTop = 0, details = false}) {
+/** Reserve a log only during a current earthquake display or an opened drawer. */
+export function communityLogLayout({width, height, cameraBottom = 0, cameraTop = 0, details = false, active = false}) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return {mode:'off', side:0, bottom:0, logHeight:0, top:0};
   }
+  if (!active && !details) return {mode:'off', side:0, bottom:0, logHeight:0, top:0};
   if (width >= 960 && height >= 500) {
     return {mode:details?'inline':'side', side:336, bottom:0, logHeight:0,
       top:Math.max(0, Math.min(height - 26 - 90, cameraTop))};

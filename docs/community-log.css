@@ -1,7 +1,7 @@
-/* Reports keep their own space when video is closed, expired or unavailable. */
+/* The log reserves space only while active or inside the manually opened drawer. */
 .eew-report-log,.eew-report-log *{box-sizing:border-box}
 .eew-report-log{position:fixed;z-index:21;display:flex;flex-direction:column;min-height:0;background:#101923;color:#e8f2fa;font:11px/1.4 system-ui,-apple-system,"BIZ UDPGothic",sans-serif;overflow:hidden;border-top:1px solid #617c9038}
-.eew-report-log[hidden],.eew-report-log [hidden]{display:none!important}
+.eew-report-log[hidden],.eew-report-log[data-layout="off"],.eew-report-log [hidden]{display:none!important}
 body.eew-log-side #app,body.eew-log-side #loading,body.eew-log-side #error,body.eew-log-side #launch{width:calc(100% - 336px);height:calc(100% - 26px)}
 body.eew-log-side .eew-report-log{right:0;top:var(--eew-log-top,0px);bottom:26px;width:336px;border-left:1px solid #5d7c9440}
 body.eew-log-side .eew-camera-panel{bottom:auto;height:auto;max-height:calc(100% - 116px);overflow:auto}

@@ -24,6 +24,7 @@ const shellFiles = [
   "community-log.js",
   "community-log-view.js",
   "community-log-layout.js",
+  "community-log-activity.js",
   "community-log.css",
   "community-focus.js",
   "community-map.js",

@@ -5,6 +5,7 @@ import {LiveCameraPlayer} from './camera-player.js';
 import {CameraLifetime} from './camera-lifetime.js';
 import {CommunityCameraPolicy,communityCameraAllowed,communityCameraMustYield} from './camera-community.js';
 import {readMapControl} from './community-map-bridge.js';
+import {CommunityLogActivity} from './community-log-activity.js';
 
 const stored = () => {try{return localStorage.getItem('eew-camera-auto') !== 'false';}catch{return true;}};
 const persist = value => {try{localStorage.setItem('eew-camera-auto',String(value));}catch{/* optional storage */}};
@@ -13,6 +14,7 @@ const regionName = event => String(event?.name || '震源付近');
 export function startCameras() {
   const monitor=new EarthquakeMonitor({showActiveOnStart:true});
   const lifetime=new CameraLifetime();
+  const logActivity=new CommunityLogActivity();
   const community=new CommunityCameraPolicy({catalogue:LIVE_CAMERAS});
   let automatic=stored();
   let expanded=false;
@@ -28,6 +30,7 @@ export function startCameras() {
   let timer=null;
   let reportTimer=null;
   let lastInfoKey='';
+  let lastLogActivity='';
   const failed=new Set();
 
   const control=document.createElement('button');
@@ -151,7 +154,15 @@ export function startCameras() {
     // The independent log owns the combined reservation. Opening a camera in
     // its existing side column must not cancel a simultaneous report map pan.
     if(['eew-log-side','eew-log-bottom','eew-log-inline'].some(name=>document.body.classList.contains(name)))return;
-    globalThis.scaffolding?.relayout?.();document.dispatchEvent(new Event('eew-layout-change'));
+    globalThis.scaffolding?.relayout?.();
+    document.dispatchEvent(new CustomEvent('eew-layout-change',{detail:{source:'camera-reservation'}}));
+  }
+  function publishLogActivity(force=false){
+    const activity=logActivity.snapshot();
+    const key=JSON.stringify(activity);
+    if(!force&&key===lastLogActivity)return;
+    lastLogActivity=key;
+    document.dispatchEvent(new CustomEvent('eew-community-log-activity',{detail:activity}));
   }
   function choose(camera){
     if(!camera)return;
@@ -176,6 +187,8 @@ export function startCameras() {
   function tick(){
     clearTimeout(timer);timer=null;
     if(stopped||suspended||document.hidden)return;
+    try{logActivity.update(globalThis.vm);publishLogActivity();}
+    catch{logActivity.reset();publishLogActivity();}
     try{
       const event=monitor.update(globalThis.vm);
       latestNative=event;
@@ -258,11 +271,15 @@ export function startCameras() {
   observer.observe(document.body,{attributes:true,attributeFilter:['class']});
   document.addEventListener('visibilitychange',visibility);
   document.addEventListener('eew-community-report',receiveReport);
+  const requestLogActivity=()=>publishLogActivity(true);
+  document.addEventListener('eew-community-log-activity-request',requestLogActivity);
   addEventListener('resize',resize);addEventListener('pagehide',pause);addEventListener('pageshow',resume);
   renderInfo();tick();
   return {stop(){
     stopped=true;clearTimeout(timer);resetPlayer();observer.disconnect();
     lifetime.clear();discardReports();community.cancel();document.removeEventListener('eew-community-report',receiveReport);
+    logActivity.reset();publishLogActivity();
+    document.removeEventListener('eew-community-log-activity-request',requestLogActivity);
     document.removeEventListener('visibilitychange',visibility);
     removeEventListener('resize',resize);removeEventListener('pagehide',pause);removeEventListener('pageshow',resume);
     panel.remove();control.remove();

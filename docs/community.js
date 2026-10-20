@@ -130,6 +130,9 @@ export function startCommunity() {
   const requestLog = () => publishLog(true);
   document.addEventListener('eew-community-log-request', requestLog);
   const logView = startCommunityLogView({detailsBody:host.querySelector('.eew-community-body')});
+  const logActivity = event => logView.setActive(event.detail?.active === true);
+  document.addEventListener('eew-community-log-activity', logActivity);
+  document.dispatchEvent(new Event('eew-community-log-activity-request'));
 
   function relayout() {
     // Packager resizes its canvas synchronously; Scratch's map/layout lists
@@ -353,6 +356,7 @@ export function startCommunity() {
       if (disposed) return;
       disposed = true; pause();
       logView.stop();
+      document.removeEventListener('eew-community-log-activity', logActivity);
       mapFollow.stop();
       document.removeEventListener('visibilitychange', visibility);
       document.removeEventListener('eew-layout-change', resize);
