@@ -1,5 +1,5 @@
-// Suppress redundant renderer-state updates while retaining the viewer's 60 fps,
-// high-quality rendering, scripts, live reception and speech behavior.
+import {installMapRenderEfficiency} from './map-render-efficiency.js';
+// The VM keeps its original cadence; only map painting/presentation is limited.
 const patched = new WeakMap();
 const orderPatches = new WeakMap();
 
@@ -59,5 +59,6 @@ export function installRuntimeEfficiency(vm) {
   const order = optimizeFrontLayer(renderer);
   if (result && typeof document !== 'undefined') document.documentElement.dataset.eewEfficiency = 'active';
   if(result) result.order = order;
+  if(result && (typeof location === 'undefined' || new URLSearchParams(location.search).get('cpuRender') !== '0')) result.map = installMapRenderEfficiency(vm);
   return result;
 }

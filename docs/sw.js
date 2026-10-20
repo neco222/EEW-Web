@@ -16,6 +16,7 @@ const shellFiles = [
   "assets/project.json",
   "viewer-entry.js",
   "runtime-efficiency.js",
+  "map-render-efficiency.js",
   "community.js",
   "community.css",
   "community-core.js",

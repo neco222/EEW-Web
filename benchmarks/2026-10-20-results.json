@@ -1,0 +1,300 @@
+{
+  "schema": 1,
+  "date": "2026-10-20",
+  "baselineCommit": "646037c",
+  "environment": {
+    "os": "Windows 11 Pro x64, build 22631",
+    "cpu": "Intel Core i7-11700K",
+    "physicalCores": 8,
+    "logicalProcessors": 16,
+    "browser": "Chrome/155.0.8059.80",
+    "viewport": {
+      "width": 1280,
+      "height": 720,
+      "devicePixelRatio": 1
+    },
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "cameraVideo": false,
+    "externalEarthquakeInputs": "local synthetic fixtures only",
+    "procedureProfiling": false
+  },
+  "sourceUnchangedDuringMeasurement": true,
+  "sourceFiles": {
+    "runtime-efficiency.js": {
+      "bytes": 3070,
+      "sha256": "707a7a6dbff5d95fe63bab82ab44e3edceb40b6a17fb2f08180ed4a90fa42cfc"
+    },
+    "map-render-efficiency.js": {
+      "bytes": 16698,
+      "sha256": "f76c6b53feffea725ac0cd1cfaec5da0680357aabbe67fc192ec7523472f85f7"
+    },
+    "viewer-entry.js": {
+      "bytes": 973,
+      "sha256": "893e29db216acadea40a2538b775dc7553d53138bbad881996c0498e9829b64d"
+    },
+    "index.js": {
+      "bytes": 2362033,
+      "sha256": "6ff722c21cb1574d1c64e89554e70e83e6d7cbb2cab1bd694b8e38db2e46beeb"
+    },
+    "assets/project.json": {
+      "bytes": 5875505,
+      "sha256": "b2a1c0d9cb12d073b42c1acd5cccf3926faffdd369f60d4add684c4a4618336d"
+    }
+  },
+  "method": {
+    "mapAndDrawWindow": "20 seconds per case; actual elapsedMs recorded below",
+    "cpuScope": "Dedicated Chrome process tree, including the separate SwiftShader GPU service. Excludes the sampler and other apps.",
+    "cpuPercentFormula": "100 * processTreeCpuSeconds / processTreeWallSeconds / 16",
+    "cpuWindow": "OS start/end snapshots bracket the meter window and include snapshot overhead; use each actual CPU window below, not 20 seconds.",
+    "presentation": "baseline final draw cap=15; optimized own final cap=15, observer cap disabled=0",
+    "actualFrameCounter": "renderer._drawThese called with the complete drawList and default draw mode",
+    "penStampCounter": "Calls reaching the adapter, including background calls it may satisfy from cache; not a count of GPU stamps.",
+    "cacheStats": "Lifetime counters copied at case end; warm-up included; not a strict 20-second cache delta.",
+    "limits": [
+      "One measured run per case and variant; not a cross-device guarantee.",
+      "Synthetic input validates the native parser/VM/display path, not live upstream delivery.",
+      "Headless audio generation/decoding/start is observed; no claim of a human hearing the output.",
+      "Camera video is disabled in both local variants to isolate map cost. Production camera settings are unchanged."
+    ]
+  },
+  "runs": [
+    {
+      "variant": "baseline",
+      "case": "normal",
+      "elapsedMs": 20009,
+      "treeCpuSeconds": 102.828125,
+      "treeWindowSeconds": 22.198,
+      "cpuPercent": 28.952,
+      "oneCoreCpuPercent": 463.2315,
+      "rendererMainThreadCpuSeconds": 5.3662,
+      "rendererProcessCpuSeconds": 6.8201,
+      "actualFps": 14.7933,
+      "actualFrames": 296,
+      "vmStepsPerSecond": 60.1229,
+      "penClearCallsPerSecond": 60.1229,
+      "penStampAdapterCallsPerSecond": 360.7377,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": null,
+        "tsunamiActive": null,
+        "noVideoDecoder": true
+      },
+      "optimizerAtEnd": null
+    },
+    {
+      "variant": "baseline",
+      "case": "eew",
+      "elapsedMs": 20221.09999999404,
+      "treeCpuSeconds": 194.21875,
+      "treeWindowSeconds": 21.762,
+      "cpuPercent": 55.7792,
+      "oneCoreCpuPercent": 892.4674,
+      "rendererMainThreadCpuSeconds": 6.9605,
+      "rendererProcessCpuSeconds": 7.7207,
+      "actualFps": 13.3029,
+      "actualFrames": 269,
+      "vmStepsPerSecond": 50.9863,
+      "penClearCallsPerSecond": 50.9863,
+      "penStampAdapterCallsPerSecond": 3426.4209,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": true,
+        "tsunamiActive": null,
+        "noVideoDecoder": true
+      },
+      "optimizerAtEnd": null
+    },
+    {
+      "variant": "baseline",
+      "case": "tsunami",
+      "elapsedMs": 20013.59999999404,
+      "treeCpuSeconds": 115.28125,
+      "treeWindowSeconds": 23.141,
+      "cpuPercent": 31.1356,
+      "oneCoreCpuPercent": 498.1688,
+      "rendererMainThreadCpuSeconds": 4.9513,
+      "rendererProcessCpuSeconds": 5.5435,
+      "actualFps": 15.0398,
+      "actualFrames": 301,
+      "vmStepsPerSecond": 62.1577,
+      "penClearCallsPerSecond": 62.1577,
+      "penStampAdapterCallsPerSecond": 652.956,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": null,
+        "tsunamiActive": true,
+        "noVideoDecoder": true
+      },
+      "optimizerAtEnd": null
+    },
+    {
+      "variant": "optimized",
+      "case": "normal",
+      "elapsedMs": 20014,
+      "treeCpuSeconds": 10.125,
+      "treeWindowSeconds": 20.78,
+      "cpuPercent": 3.0453,
+      "oneCoreCpuPercent": 48.7247,
+      "rendererMainThreadCpuSeconds": 4.4745,
+      "rendererProcessCpuSeconds": 5.5954,
+      "actualFps": 14.7896,
+      "actualFrames": 296,
+      "vmStepsPerSecond": 61.2072,
+      "penClearCallsPerSecond": 14.8396,
+      "penStampAdapterCallsPerSecond": 89.0377,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": null,
+        "tsunamiActive": null,
+        "noVideoDecoder": true
+      },
+      "optimizerAtEnd": {
+        "active": true,
+        "cacheActive": true,
+        "stats": {
+          "mapFrames": 410,
+          "staticBuilds": 2,
+          "staticCacheHits": 407,
+          "staticStamps": 10,
+          "staticStampsSkipped": 820,
+          "finalDraws": 410,
+          "finalDrawsSkipped": 1274,
+          "fallbacks": 0
+        }
+      }
+    },
+    {
+      "variant": "optimized",
+      "case": "eew",
+      "elapsedMs": 20009.69999998808,
+      "treeCpuSeconds": 49.140625,
+      "treeWindowSeconds": 20.86,
+      "cpuPercent": 14.7233,
+      "oneCoreCpuPercent": 235.5735,
+      "rendererMainThreadCpuSeconds": 4.3223,
+      "rendererProcessCpuSeconds": 5.5624,
+      "actualFps": 15.0427,
+      "actualFrames": 301,
+      "vmStepsPerSecond": 62.4197,
+      "penClearCallsPerSecond": 15.0427,
+      "penStampAdapterCallsPerSecond": 1007.2115,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": true,
+        "tsunamiActive": null,
+        "noVideoDecoder": true
+      },
+      "optimizerAtEnd": {
+        "active": true,
+        "cacheActive": true,
+        "stats": {
+          "mapFrames": 813,
+          "staticBuilds": 4,
+          "staticCacheHits": 808,
+          "staticStamps": 14,
+          "staticStampsSkipped": 1622,
+          "finalDraws": 814,
+          "finalDrawsSkipped": 2542,
+          "fallbacks": 0
+        }
+      }
+    },
+    {
+      "variant": "optimized",
+      "case": "tsunami",
+      "elapsedMs": 20013.5,
+      "treeCpuSeconds": 13.84375,
+      "treeWindowSeconds": 20.652,
+      "cpuPercent": 4.1896,
+      "oneCoreCpuPercent": 67.0335,
+      "rendererMainThreadCpuSeconds": 4.2836,
+      "rendererProcessCpuSeconds": 5.6055,
+      "actualFps": 14.9899,
+      "actualFrames": 300,
+      "vmStepsPerSecond": 62.3579,
+      "penClearCallsPerSecond": 14.9899,
+      "penStampAdapterCallsPerSecond": 157.8934,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": null,
+        "tsunamiActive": true,
+        "noVideoDecoder": true
+      },
+      "optimizerAtEnd": {
+        "active": true,
+        "cacheActive": true,
+        "stats": {
+          "mapFrames": 1217,
+          "staticBuilds": 37,
+          "staticCacheHits": 1179,
+          "staticStamps": 80,
+          "staticStampsSkipped": 2364,
+          "finalDraws": 1216,
+          "finalDrawsSkipped": 3810,
+          "fallbacks": 0
+        }
+      }
+    }
+  ],
+  "speech": [
+    {
+      "variant": "optimized",
+      "case": "normal",
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "elapsedMs": 5016.800000011921,
+      "actualFps": 14.94976877687406,
+      "checks": {
+        "cloudIOAdvanced": true,
+        "nativeReceiveAdvanced": true,
+        "nativeClockChanged": true,
+        "vmClockAdvanced": true,
+        "eewActive": null,
+        "tsunamiActive": null,
+        "noVideoDecoder": true
+      },
+      "speech": {
+        "started": 1,
+        "completed": 1,
+        "failed": 0,
+        "audioStarts": 1,
+        "log": [
+          {
+            "atMs": 1,
+            "words": "これは計測用の模擬データです。"
+          }
+        ]
+      },
+      "tts": {
+        "requested": 1,
+        "ok": 1,
+        "failed": 0
+      },
+      "audioDecodeCalls": 1,
+      "audioStartCalls": 1
+    }
+  ],
+  "cleanup": {
+    "chromeExited": true,
+    "samplerExited": true,
+    "profilesRetained": true,
+    "chromeExitCode": 0
+  }
+}
