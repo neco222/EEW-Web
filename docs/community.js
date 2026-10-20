@@ -1,6 +1,7 @@
 import { CommunityStore } from './community-core.js';
 import { CommunityFeed } from './community-feed.js';
 import { CommunityLog } from './community-log.js';
+import { startCommunityMapFollow } from './community-map.js';
 import { CommunityPulses, formatPulseCount } from './community-pulses.js';
 import { readView } from './viewer-bridge.js';
 import { layoutReportBubbles } from './report-bubbles.js';
@@ -21,6 +22,7 @@ export function startCommunity() {
   let state = store.snapshot();
   let status = { state: 'connecting', message: '接続しています' };
   let enabled = safeRead('eew-community-bursts', 'true') !== 'false';
+  let followEnabled = safeRead('eew-community-focus', 'true') !== 'false';
   let demoPending = demo;
   let running = false;
   let disposed = false;
@@ -48,6 +50,7 @@ export function startCommunity() {
       <p class="eew-community-period">コミュニティ投稿</p>
       <p class="eew-community-status" role="status">接続しています</p>
       <label class="eew-community-toggle"><input type="checkbox">新着を3秒表示</label>
+      <label class="eew-community-toggle"><input type="checkbox" class="eew-community-follow">投稿地域へ地図移動</label>
       <div class="eew-community-regions" aria-label="地域別の投稿数"></div>
       <p class="eew-community-note"></p>
       <p class="eew-community-caption">投稿数はユーザーによる体感の報告です。震度や震源を示すものではありません。位置は地域の代表点です。</p>
@@ -72,9 +75,16 @@ export function startCommunity() {
   const regionsNode = host.querySelector('.eew-community-regions');
   const noteNode = host.querySelector('.eew-community-note');
   const checkbox = host.querySelector('input');
+  const followCheckbox = host.querySelector('.eew-community-follow');
   const refreshButton = host.querySelector('.eew-community-refresh');
   const demoButton = host.querySelector('.eew-community-demo');
   checkbox.checked = enabled;
+  followCheckbox.checked = followEnabled;
+  followCheckbox.title = '地震情報の自動表示や手動の地図操作を優先します';
+  const mapFollow = startCommunityMapFollow({enabled:followEnabled, onMove(next) {
+    host.dataset.focusAreas = next.areas.map(area => area.code).join(',');
+    host.dataset.focusedAt = String(Date.now());
+  }});
 
   function publishLog(force = false) {
     if (disposed) return;
@@ -248,25 +258,33 @@ export function startCommunity() {
   }
   function start() {
     if (running || disposed) return;
-    running = true; relayout(); feed?.start(); wake();
+    running = true; mapFollow.resume();relayout(); feed?.start(); wake();
   }
   function pause() {
     running = false; clearTimeout(timer); timer = null;
     clearTimeout(settleTimer); settleTimer = null;
     clearTimeout(logTimer); logTimer = null;
     feed?.stop(); clearVisuals();
+    mapFollow.pause();
   }
   const feed = demo ? null : new CommunityFeed({
     store,
     onChange: (next) => { state = next; updatePanel(); wake(); },
     onStatus: (next) => { status = next; updatePanel(); queueLog(); },
-    onLive: (next, detail) => { log.ingestLive(next, detail);queueLog();if (enabled) pulses.ingestLive(next, detail); wake(); },
+    onLive: (next, detail) => { log.ingestLive(next, detail);queueLog();
+      // Feed acceptance defines a new post; the bounded display log may be full.
+      if (detail.message?.code === 561) mapFollow.ingestLive(next, detail);
+      if (enabled) pulses.ingestLive(next, detail); wake(); },
     onHistory: (messages) => {log.ingestHistory(messages);queueLog();},
   });
   checkbox.addEventListener('change', () => {
     enabled = checkbox.checked; safeWrite('eew-community-bursts', String(enabled));
     if (!enabled) pulses.clear();
     wake();
+  });
+  followCheckbox.addEventListener('change', () => {
+    followEnabled = followCheckbox.checked;safeWrite('eew-community-focus', String(followEnabled));
+    mapFollow.setEnabled(followEnabled);
   });
   refreshButton.addEventListener('click', () => feed?.refresh());
   details.addEventListener('toggle', () => {
@@ -296,6 +314,7 @@ export function startCommunity() {
     stop() {
       if (disposed) return;
       disposed = true; pause();
+      mapFollow.stop();
       document.removeEventListener('visibilitychange', visibility);
       document.removeEventListener('eew-layout-change', resize);
       document.removeEventListener('eew-community-log-request', requestLog);
