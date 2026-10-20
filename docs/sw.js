@@ -28,6 +28,7 @@ const shellFiles = [
   "community-focus.js",
   "community-map.js",
   "community-map-bridge.js",
+  "community-map-lease.js",
   "p2p-areas.js",
   "viewer-bridge.js",
   "report-bubbles.js",

@@ -1,13 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {EventEmitter} from 'node:events';
 import {readView} from '../docs/viewer-bridge.js';
 import {readMapControl,panCommunityFocus,cancelCommunityFocus} from '../docs/community-map-bridge.js';
+import {getCommunityMapLease} from '../docs/community-map-lease.js';
 
 const project=JSON.parse(await readFile(new URL('../docs/assets/project.json',import.meta.url),'utf8'));
 const EPOCH=Date.UTC(2000,0,1),NOW=Date.parse('2026-10-20T06:00:00Z');
 const point={lat:43.06,lon:141.354};
-function fixture(){
+const autoCode='自動カメラ呼び出し %b %s %b %b %b';
+
+// Native Blocks expands SB3 inline literals into shadow/reporter blocks.
+function nativeBlocks(source){
+  const normalized={};let serial=0;
+  function literal(raw,parent){
+    const[type,value,id]=raw,key=`bridge-test/${++serial}`,number=type>=4&&type<=8;
+    const opcode=number?'math_number':type===12?'data_variable':type===13?'data_listcontents':'text';
+    const name=number?'NUM':type===12?'VARIABLE':type===13?'LIST':'TEXT';
+    normalized[key]={id:key,opcode,parent,next:null,inputs:{},fields:{[name]:{name,value,id}}};
+    return key;
+  }
+  for(const[id,raw]of Object.entries(source)){
+    const fields=Object.fromEntries(Object.entries(raw.fields??{}).map(([name,[value,id]])=>[name,{name,value,id}]));
+    const inputs=Object.fromEntries(Object.entries(raw.inputs??{}).map(([name,rawInput])=>[name,
+      {name,block:Array.isArray(rawInput[1])?literal(rawInput[1],id):rawInput[1],shadow:null}]));
+    normalized[id]={...structuredClone(raw),id,inputs,fields};
+  }
+  return {_blocks:normalized,getBlock(id){return this._blocks[id];}};
+}
+
+function fixture({compiled=false}={}){
   const original=project.targets.find(target=>target.isStage);
   const stage={isStage:true,isOriginal:true,variables:{}};
   for(const[id,[name,value]]of Object.entries(original.variables))stage.variables[id]={name,value:structuredClone(value),type:''};
@@ -18,8 +41,8 @@ function fixture(){
   let clock=9000,width=480,height=360;
   const document={getElementById:()=>({hidden:true})};
   const canvas={ownerDocument:document,getBoundingClientRect:()=>({left:12,top:20,width,height})};
-  const runtime={targets:[stage,receiver],threads:[{}],stageWidth:480,stageHeight:360,renderer:{canvas},
-    getTargetForStage(){return this.targets[0];},_primitives:{sensing_dayssince2000:()=>clock},ioDevices:{mouse:{getIsDown:()=>false}}};
+  const runtime=Object.assign(new EventEmitter(),{targets:[stage,receiver],threads:[{}],stageWidth:480,stageHeight:360,renderer:{canvas},
+    getTargetForStage(){return this.targets[0];},_primitives:{sensing_dayssince2000:()=>clock},ioDevices:{mouse:{getIsDown:()=>false}}});
   const vm={runtime};
   set('タブ',1);set('地図表示モード',1);set('画面サイズモード','w');set('ダイアログなう','');
   set('地図過去表示モード',0);set('#リプレイモード',0);set('自動カメラ移動許可',1);set('EEW全体で発表中？',0);
@@ -30,9 +53,16 @@ function fixture(){
   const camera=byName('1カメラ系').value;
   Object.assign(camera,{0:16,1:41,2:1.8,3:'',4:'',5:1.8,11:0,17:1,18:0,19:16,20:41,21:clock-40/86400,32:0,33:''});
   set('自動カメラ時間',clock-2/86400);
+  let nativeFits=0;
+  if(compiled){
+    receiver.blocks=nativeBlocks(project.targets.find(target=>target.name==='受信と検出').blocks);
+    const nativeFit=function(){nativeFits++;camera[17]=0;set('自動カメラ時間',clock);return 'native-fit';};
+    runtime.threads=[{target:receiver,topBlock:'c%S',isCompiled:true,procedures:{[`Z${autoCode}`]:nativeFit}}];
+  }
   const values=()=>structuredClone(runtime.targets.map(target=>Object.fromEntries(Object.entries(target.variables).map(([id,entry])=>[id,entry.value]))));
   return {vm,stage,receiver,camera,byName,set,values,view:()=>readView(vm),control:()=>readMapControl(vm,readView(vm),NOW),
     pan:(focus=point,view=undefined)=>panCommunityFocus(focus,vm,view,NOW),clock:()=>clock,
+    nativeFits:()=>nativeFits,fit:(comment='5秒ごと',flags=['','false','false'])=>runtime.threads[0].procedures[`Z${autoCode}`](false,comment,...flags),
     advance(ms){clock+=ms/86400000;},resize(w,h){width=w;height=h;runtime.stageWidth=w;runtime.stageHeight=h;}};
 }
 
@@ -163,4 +193,50 @@ test('native EEW after a community request owns its new target; community cannot
   assert.ok(loop.indexOf('bFy')<loop.indexOf('bFB'),'native range calculation runs before camera movement');
   assert.equal(map['bFy'].mutation.proccode,'自動カメラ計算');assert.equal(map['bFB'].mutation.proccode,'カメラ移動');
   for(const[id,index]of [['`U','6'],['`Z','20'],['`!','21'],['bKL','19']])assert.equal(map[id].inputs.INDEX[1][1],index);
+});
+
+test('a successful pan alone acquires the short lease and only its periodic fit is held',()=>{
+  const f=fixture({compiled:true});assert.equal(getCommunityMapLease(f.vm),null);
+  assert.equal(f.pan().moved,true);
+  const lease=getCommunityMapLease(f.vm);assert.ok(lease);assert.equal(lease.active,true);
+  const before=f.values();assert.notEqual(f.fit(),'native-fit');assert.equal(f.nativeFits(),0);
+  assert.equal(lease.stats.skipped,1);assert.deepEqual(f.values(),before);
+  assert.equal(f.pan().moved,true);assert.equal(getCommunityMapLease(f.vm),lease,'same target does not renew the lease');
+  assert.equal(f.fit('地震情報表示'),'native-fit');assert.equal(f.nativeFits(),1);
+  assert.equal(lease.active,false);assert.equal(lease.reason,'native-request');
+  assert.equal(f.camera[17],0,'a real native fit retains its range request');
+  assert.equal(f.byName('自動カメラ時間').value,f.clock());
+});
+
+test('new native priority, source changes and resize yield before the next background call',()=>{
+  const cases=[
+    f=>{f.byName('0EEW').value[9*14]=1;},
+    f=>{f.byName('9津波関連').value[0]=3;},
+    f=>f.set('地図過去表示モード',1),
+    f=>f.set('#リプレイモード',1),
+    f=>{f.camera[21]=f.clock();},
+    f=>f.set('自動カメラ移動許可',0),
+    f=>f.set('自動カメラ時間',f.clock()),
+    f=>{f.byName('5地震情報リスト').value[0]='new source';},
+    f=>f.resize(600,360),
+  ];
+  for(const change of cases){
+    const f=fixture({compiled:true});f.pan();const lease=getCommunityMapLease(f.vm);assert.ok(lease);
+    change(f);const before=f.values();
+    // Calling the native fit directly also checks fresh priority; no execution
+    // event or controller poll is required before allowing this native call.
+    assert.equal(f.fit(),'native-fit');assert.equal(f.nativeFits(),1);assert.equal(lease.active,false);
+    const after=f.values(),id=Object.keys(f.stage.variables).find(id=>f.stage.variables[id].name==='1カメラ系');
+    before[0][id][17]=0;
+    const timeId=Object.keys(f.stage.variables).find(id=>f.stage.variables[id].name==='自動カメラ時間');before[0][timeId]=f.clock();
+    assert.deepEqual(after,before,'only the original native function changes state after yielding');
+  }
+});
+
+test('cancelling our pan releases the hook as well as its still-owned follow flag',()=>{
+  const f=fixture({compiled:true});f.pan();const lease=getCommunityMapLease(f.vm);assert.ok(lease);
+  const before=f.values();assert.equal(cancelCommunityFocus(f.vm).cancelled,true);assert.equal(lease.active,false);
+  const id=Object.keys(f.stage.variables).find(id=>f.stage.variables[id].name==='1カメラ系');before[0][id][18]=0;
+  assert.deepEqual(f.values(),before);assert.equal(getCommunityMapLease(f.vm),null);
+  assert.equal(f.fit(),'native-fit');assert.equal(f.nativeFits(),1);
 });

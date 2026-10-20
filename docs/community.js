@@ -52,6 +52,7 @@ export function startCommunity() {
       <p class="eew-community-status" role="status">接続しています</p>
       <label class="eew-community-toggle"><input type="checkbox">新着を3秒表示</label>
       <label class="eew-community-toggle"><input type="checkbox" class="eew-community-follow">投稿地域へ地図移動</label>
+      <p class="eew-community-follow-state" role="status">新着の個別投稿を待っています</p>
       <div class="eew-community-regions" aria-label="地域別の投稿数"></div>
       <p class="eew-community-note"></p>
       <p class="eew-community-caption">投稿数はユーザーによる体感の報告です。震度や震源を示すものではありません。位置は地域の代表点です。</p>
@@ -77,12 +78,36 @@ export function startCommunity() {
   const noteNode = host.querySelector('.eew-community-note');
   const checkbox = host.querySelector('input');
   const followCheckbox = host.querySelector('.eew-community-follow');
+  const followStateNode = host.querySelector('.eew-community-follow-state');
   const refreshButton = host.querySelector('.eew-community-refresh');
   const demoButton = host.querySelector('.eew-community-demo');
   checkbox.checked = enabled;
   followCheckbox.checked = followEnabled;
+  followStateNode.textContent = followEnabled?'新着の個別投稿を待っています':'投稿による地図移動はOFFです';
   followCheckbox.title = '地震情報の自動表示や手動の地図操作を優先します';
-  const mapFollow = startCommunityMapFollow({enabled:followEnabled, onMove(next) {
+  const mapFollow = startCommunityMapFollow({enabled:followEnabled, onState(next) {
+    host.dataset.focusState = next.state;
+    host.dataset.focusReason = next.reason ?? '';
+    host.dataset.focusCheckedAt = String(next.at);
+    const waiting = '元の地図の自動調整後に移動します';
+    const messages = {idle:'新着の個別投稿を待っています',disabled:'投稿による地図移動はOFFです',paused:'投稿による地図移動を一時停止しています',
+      pending:'新着の投稿地域を確認しています',waiting,moving:'投稿地域へ地図を移動中です',arrived:'投稿地域を表示しました'};
+    const reasons = {'manual-hold':'地図の手動操作を優先しています','manual-motion':'地図の手動操作を優先しています',
+      'eew-active':'緊急地震速報の地図を優先しています','tsunami-active':'津波情報の地図を優先しています',
+      'native-information':'新しい地震情報の地図を優先しています','shaking':'観測された揺れの地図を優先しています',
+      'native-auto-disabled':'元の「自動カメラ」がOFFです','history':'地震履歴の表示を優先しています',
+      'replay':'リプレイの表示を優先しています','dialog':'設定・案内画面の表示を優先しています',
+      'not-map':'この画面では地図を移動しません','native-replaced':'元の地震情報の地図に切り替わりました',
+      'native-pending':'元の地図の自動調整を優先しました','native-auto-recent':'元の地図の自動調整を優先しました',
+      'native-moving':'元の地図の自動調整を優先しました','layout-unsettled':'画面の切り替えを優先しました',
+      'old-source':'古い投稿のため地図を移動しません','unlocated':'地域を特定できない投稿です',
+      'expired':'投稿の受信から時間が経ったため移動しません','non-live':'履歴の投稿では地図を移動しません',
+      'disabled':'投稿による地図移動はOFFです',
+      'movement-timeout':'地図の自動調整を優先しました'};
+    followStateNode.textContent = messages[next.state] ?? reasons[next.reason] ?? '新着の個別投稿を待っています';
+    followStateNode.dataset.state = next.state;
+    document.dispatchEvent(new CustomEvent('eew-community-map-state',{detail:{...next,message:followStateNode.textContent}}));
+  }, onMove(next) {
     host.dataset.focusAreas = next.areas.map(area => area.code).join(',');
     host.dataset.focusedAt = String(Date.now());
   }});
@@ -276,8 +301,13 @@ export function startCommunity() {
     onLive: (next, detail) => { log.ingestLive(next, detail);queueLog();
       // Feed acceptance defines a new post; the bounded display log may be full.
       if (detail.message?.code === 561) {
-        mapFollow.ingestLive(next, detail);
+        // Queue video first. Its optional shelf resize settles before the map
+        // submits a geographic target and starts its brief background-fit hold.
         document.dispatchEvent(new CustomEvent('eew-community-report', {detail:{message:detail.message,receivedAt:detail.receivedAt}}));
+        const decision = mapFollow.ingestLive(next, detail);
+        host.dataset.focusAccepted = String(decision.accepted);
+        host.dataset.focusIntakeReason = decision.reason;
+        host.dataset.focusLastReportAt = String(detail.receivedAt);
       }
       if (enabled) pulses.ingestLive(next, detail); wake(); },
     onHistory: (messages) => {log.ingestHistory(messages);queueLog();},

@@ -28,6 +28,8 @@ body.eew-community-details #app,body.eew-community-details #loading,body.eew-com
 .eew-community-region strong{font-variant-numeric:tabular-nums;white-space:nowrap;color:#c7e9f2}
 .eew-community-empty,.eew-community-caption{font-size:10px;color:#9dacbc}
 .eew-community-note{font-size:10px;color:#e7bf86}
+.eew-community-follow-state{font-size:10px;color:#adbfce;line-height:1.6}
+.eew-community-follow-state[data-state="waiting"]{color:#e7bf86}
 .eew-community-note:empty{display:none}
 .eew-community-links{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px}
 .eew-community a{font-size:10px;color:#bdd9e9;text-decoration:none}

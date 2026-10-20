@@ -15,7 +15,8 @@ body.eew-log-inline .eew-report-log{position:relative;top:auto;right:auto;bottom
 .eew-report-log-heading h2{flex:1;margin:0;font-size:12px;font-weight:650;white-space:nowrap}
 .eew-report-log-status{font-size:10px;color:#e1c384;white-space:nowrap}
 .eew-report-log[data-connection="live"] .eew-report-log-status,.eew-report-log[data-connection="shared"] .eew-report-log-status{color:#a0dfc4}
-.eew-report-log-summary{height:22px;flex:none;padding:0 10px 4px;font-size:10px;color:#9eb5c7}
+.eew-report-log-summary{flex:none;padding:0 10px 4px;font-size:10px;line-height:1.7;color:#9eb5c7}
+.eew-report-log-summary span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .eew-report-log-follow{padding:1px 4px;color:#d4e3ee;background:#263747;border:1px solid #496074;border-radius:4px;cursor:pointer;font:9px system-ui,sans-serif;white-space:nowrap}
 .eew-report-log-rows{position:relative;min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4d697a transparent;list-style:none;padding:0;margin:0}
 .eew-report-log-row{display:grid;grid-template-columns:54px minmax(0,1fr)32px;align-items:center;gap:6px;min-height:32px;padding:6px 10px;border-top:1px solid #b9d0df0c}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CommunityStore } from '../docs/community-core.js';
 import { CommunityFeed, COMMUNITY_WEBSOCKET_URL } from '../docs/community-feed.js';
+import { startCommunityMapFollow } from '../docs/community-map.js';
 
 const BASE = Date.parse('2026-10-20T12:00:00+09:00');
 const TIME = '2026/10/20 12:00:00.000';
@@ -81,6 +82,38 @@ function harness(extra = {}) {
   });
   return { clock, WebSocket, store, feed, statuses, changes, live, history, calls, eventTarget };
 }
+
+test('the observed Toyama 561 reaches the map from one live WebSocket message while native fit settles',async()=>{
+  // Public report observed during the reported failure; original source fields.
+  const message={code:561,id:'6ad7566cc58757000704c9f9',area:310,time:'2026/10/20 20:54:20.858'};
+  const clock=new Clock();clock.time=Date.parse('2026-10-20T20:54:21.858+09:00');
+  const doc=new EventTarget();doc.hidden=false;doc.getElementById=()=>({hidden:true});
+  const native={ready:true,blocked:true,reason:'native-auto-recent'},moves=[],intakes=[];
+  const follower=startCommunityMapFollow({now:clock.now,doc,events:new EventTarget(),vm:()=>({}),read:()=>({}),
+    control:()=>({...native}),pan:next=>{moves.push(next);return{moved:true};},cancelPan:()=>{},
+    schedule:clock.setTimeout,cancel:clock.clearTimeout});
+  const h=harness({clock,options:{onLive:(next,detail)=>intakes.push(follower.ingestLive(next,detail))}});
+  h.feed.start();await flush();h.WebSocket.instances[0].open();
+  h.WebSocket.instances[0].message(message);
+  assert.equal(h.store.snapshot().total,1);assert.equal(intakes.length,1);assert.equal(intakes[0].accepted,true);
+  await clock.advance(600);assert.equal(moves.length,0);
+  native.blocked=false;native.reason=null;await clock.advance(100);
+  assert.equal(moves.length,1);assert.equal(moves[0].count,1);assert.equal(moves[0].areas[0].code,310);
+  assert.equal(moves[0].lat,36.827);assert.equal(moves[0].lon,137.409);
+  h.WebSocket.instances[0].message(message);await clock.advance(4000);
+  assert.equal(intakes.length,1);assert.equal(moves.length,1);
+  follower.stop();h.feed.stop();assert.equal(clock.timers.size,0);
+});
+
+test('the same one Toyama report loaded as history cannot later masquerade as a new live movement',async()=>{
+  const message={code:561,id:'6ad7566cc58757000704c9f9',area:310,time:'2026/10/20 20:54:20.858'};
+  const clock=new Clock();clock.time=Date.parse('2026-10-20T20:54:21.858+09:00');
+  const h=harness({clock,fetch:url=>Promise.resolve(response(url.includes('codes=561')?[message]:[]))});
+  h.feed.start();await flush();h.WebSocket.instances[0].open();
+  assert.equal(h.store.snapshot().total,1);assert.equal(h.history.length,1);
+  h.WebSocket.instances[0].message(message);await clock.advance(1000);
+  assert.equal(h.live.length,0);h.feed.stop();assert.equal(clock.timers.size,0);
+});
 
 test('start is inert until called and idempotent; startup makes exactly two API requests and one socket', async () => {
   const h = harness();

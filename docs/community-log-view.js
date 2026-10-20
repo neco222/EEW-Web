@@ -15,12 +15,14 @@ export function startCommunityLogView({detailsBody}) {
   dock.className='eew-report-log';
   dock.setAttribute('aria-label','コミュニティ投稿ログ');
   dock.innerHTML=`<div class="eew-report-log-heading"><h2>コミュニティ投稿ログ</h2><span class="eew-report-log-status"></span><button type="button" class="eew-report-log-follow" hidden>最新へ</button></div>
-    <div class="eew-report-log-summary">直近10分・新しい順</div>
+    <div class="eew-report-log-summary"><span>直近10分・新しい順</span><span class="eew-report-log-map"></span></div>
     <ol class="eew-report-log-rows" aria-label="1投稿ずつの地域と時刻" tabindex="0"></ol><p class="eew-report-log-empty">新しい投稿を待っています</p>`;
   const rows=dock.querySelector('ol');
   const status=dock.querySelector('.eew-report-log-status');
   const empty=dock.querySelector('.eew-report-log-empty');
   const latest=dock.querySelector('button');
+  const mapStatus=dock.querySelector('.eew-report-log-map');
+  mapStatus.textContent=document.querySelector('.eew-community-follow-state')?.textContent||'新着の個別投稿を待っています';
   document.body.append(dock);
 
   function updateFollow(){
@@ -97,6 +99,9 @@ export function startCommunityLogView({detailsBody}) {
     }
   }
   const receive=event=>{if(Array.isArray(event.detail?.entries)){state=event.detail;render();}};
+  const receiveMap=event=>{if(typeof event.detail?.message==='string'){
+    mapStatus.textContent=event.detail.message;dock.dataset.mapState=event.detail.state;dock.dataset.mapReason=event.detail.reason??'';
+  }};
   const visibility=()=>{if(!document.hidden){render();syncLayout();}};
   const mutation=new MutationObserver(syncLayout);
   mutation.observe(document.body,{attributes:true,attributeFilter:['class']});
@@ -104,6 +109,7 @@ export function startCommunityLogView({detailsBody}) {
   rows.addEventListener('animationend',event=>event.target.classList?.remove('is-new'));
   latest.addEventListener('click',()=>{follow=true;unseen=0;rows.scrollTop=0;updateFollow();});
   document.addEventListener('eew-community-log',receive);
+  document.addEventListener('eew-community-map-state',receiveMap);
   document.addEventListener('eew-camera-layout',syncLayout);
   document.addEventListener('visibilitychange',visibility);
   addEventListener('resize',syncLayout);
@@ -111,6 +117,7 @@ export function startCommunityLogView({detailsBody}) {
   return {stop(){
     if(stopped)return;stopped=true;mutation.disconnect();sizeObserver?.disconnect();
     document.removeEventListener('eew-community-log',receive);document.removeEventListener('eew-camera-layout',syncLayout);
+    document.removeEventListener('eew-community-map-state',receiveMap);
     document.removeEventListener('visibilitychange',visibility);removeEventListener('resize',syncLayout);
     dock.remove();nodes.clear();
     document.body.classList.remove('eew-log-side','eew-log-bottom','eew-log-inline');

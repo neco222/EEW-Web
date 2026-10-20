@@ -11,14 +11,16 @@ function target() {
     get listenerCount() {return [...handlers.values()].reduce((sum,callbacks)=>sum+callbacks.size,0);},
   };
 }
-function fixture() {
+function fixture({trackFlight=false}={}) {
   let now = Date.UTC(2026,9,20), serial = 0, timerId = 0, rejectPan = false, activePan = null;
   const native = {ready:true,blocked:false,reason:null};
-  const timers = new Map(), moves = [], cancellations = [], doc = target(), events = target();
+  const timers = new Map(), moves = [], cancellations = [], states = [], doc = target(), events = target();
   const app = {id:'app'}, canvas = {tagName:'CANVAS',closest:()=>app}, body = {tagName:'BODY'};
   doc.hidden = false;doc.getElementById = () => ({hidden:true});
   const follower = startCommunityMapFollow({doc,events,now:()=>now,vm:()=>({}),scaffolding:()=>({}),read:()=>({}),
-    control:()=>({...native}),pan:(next)=>{if(rejectPan)return {moved:false,reason:'native-priority'};moves.push(next);activePan=next;return {moved:true};},
+    control:()=>({...native}),pan:(next)=>{if(rejectPan)return {moved:false,reason:'native-priority'};moves.push(next);activePan=next;
+      if(trackFlight){native.camera={targetX:10,targetY:20};native.targetDistancePx=100;return {moved:true,target:{x:10,y:20}};}
+      return {moved:true};},onState:state=>states.push(state),
     cancelPan:()=>{cancellations.push(activePan);const cancelled=Boolean(activePan);activePan=null;return {cancelled};},
     schedule:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,at:now+delay});return id;},cancel:id=>timers.delete(id)});
   function post(area = 10) {
@@ -34,7 +36,7 @@ function fixture() {
     }
     throw new Error('Unexpected busy timer loop');
   }
-  return {follower,post,advance,moves,timers,cancellations,doc,events,canvas,body,
+  return {follower,post,advance,moves,timers,cancellations,states,doc,events,canvas,body,
     get activePan(){return activePan;},
     cameraResize:()=>doc.fire('eew-layout-change',{detail:{source:'camera-reservation'}}),
     native:value=>Object.assign(native,value),
@@ -144,7 +146,7 @@ test('unsettled geometry rejects new reports while preserving the valid pre-resi
 });
 
 test('native priority at intake still drops reports and prior candidates during camera settling',()=>{
-  for(const reason of ['eew-active','tsunami-active','history','manual-hold','native-moving']){
+  for(const reason of ['eew-active','tsunami-active','history','manual-hold','manual-motion']){
     const f=fixture();f.post();f.advance(100);f.cameraResize();f.block(true,reason);
     assert.equal(f.post(60).accepted,false,reason);
     f.block(false);f.advance(5000);
@@ -152,6 +154,61 @@ test('native priority at intake still drops reports and prior candidates during 
     f.post(70);f.advance(400);assert.equal(f.moves.length,1);assert.equal(f.moves[0].areas[0].code,70);
     f.follower.stop();
   }
+});
+
+test('one report waits for a brief native calculation or animation instead of being lost',()=>{
+  for(const reason of ['native-pending','native-auto-recent','native-moving']){
+    const f=fixture();f.block(true,reason);
+    assert.equal(f.post(310).accepted,true,reason);assert.equal(f.timers.size,1);
+    f.advance(900);assert.equal(f.moves.length,0);assert.equal(f.timers.size,1);
+    assert.equal(f.states.filter(state=>state.state==='waiting').length,1,'no status storm');
+    f.block(false);f.advance(100);
+    assert.equal(f.moves.length,1,reason);assert.equal(f.moves[0].count,1);assert.equal(f.moves[0].areas[0].code,310);
+    assert.equal(f.timers.size,0);f.follower.stop();
+  }
+});
+
+test('a transient native change at the 400ms flush retains the single original report',()=>{
+  const f=fixture();f.post(310);f.advance(300);f.block(true,'native-auto-recent');f.advance(300);
+  assert.equal(f.moves.length,0);assert.equal(f.timers.size,1);
+  f.block(false);f.advance(100);assert.equal(f.moves.length,1);assert.equal(f.moves[0].count,1);
+  assert.equal(f.timers.size,0);f.follower.stop();
+});
+
+test('native retry cannot extend the original receipt deadline or leave an idle timer',()=>{
+  const f=fixture();f.block(true,'native-pending');f.post(310);f.advance(5100);
+  assert.equal(f.moves.length,0);assert.equal(f.timers.size,0);
+  f.block(false);f.advance(10_000);assert.equal(f.moves.length,0);f.follower.stop();
+});
+
+test('real warnings, native auto OFF and manual actions discard a report waiting for native idle',()=>{
+  for(const reason of ['eew-active','tsunami-active','native-information','shaking','history','replay','native-auto-disabled','manual-hold','manual-motion']){
+    const f=fixture();f.block(true,'native-moving');f.post(310);f.advance(400);f.block(true,reason);f.advance(100);
+    assert.equal(f.timers.size,0,reason);f.block(false);f.advance(5000);assert.equal(f.moves.length,0,reason);f.follower.stop();
+  }
+  const f=fixture();f.block(true,'native-pending');f.post(310);f.doc.fire('wheel',{target:f.canvas});
+  assert.equal(f.timers.size,0);f.block(false);f.advance(31_000);assert.equal(f.moves.length,0);f.follower.stop();
+});
+
+test('a transient label without a readable native state cannot accept a report',()=>{
+  const f=fixture();f.native({ready:false,blocked:true,reason:'native-pending'});
+  assert.equal(f.post(310).accepted,false);assert.equal(f.timers.size,0);f.follower.stop();
+});
+
+test('status distinguishes a submitted target from reaching it and stops checking after arrival',()=>{
+  const f=fixture({trackFlight:true});f.post(310);f.advance(400);
+  assert.equal(f.states.at(-1).state,'moving');assert.equal(f.states.some(state=>state.state==='arrived'),false);
+  assert.equal(f.timers.size,1);
+  f.advance(100);f.native({targetDistancePx:1,nativeMoving:false});f.advance(100);
+  assert.equal(f.states.at(-1).state,'arrived');assert.equal(f.timers.size,0);f.follower.stop();
+});
+
+test('a native replacement or a stalled animation is never reported as an arrival',()=>{
+  const f=fixture({trackFlight:true});f.post();f.advance(400);f.native({camera:{targetX:50,targetY:60},targetDistancePx:0});f.advance(100);
+  assert.equal(f.states.at(-1).reason,'native-replaced');assert.equal(f.states.some(state=>state.state==='arrived'),false);
+  assert.equal(f.timers.size,0);f.follower.stop();
+  const stalled=fixture({trackFlight:true});stalled.post();stalled.advance(3500);
+  assert.equal(stalled.states.at(-1).reason,'movement-timeout');assert.equal(stalled.timers.size,0);stalled.follower.stop();
 });
 
 test('native priority is checked again after a deferred camera reservation and never replayed later',()=>{

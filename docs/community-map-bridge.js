@@ -1,4 +1,5 @@
 import {readView} from './viewer-bridge.js';
+import {acquireCommunityMapLease} from './community-map-lease.js';
 
 // Native source: assets/project.json, 地図/カメラ移動 (btN),
 // カメラ位置制限して自動移動 (bsE), 自動カメラ計算 (bK.), and
@@ -100,6 +101,31 @@ function owner(source) {
 
 function activeAnchor(value) {return value !== '' && value !== null && value !== undefined;}
 function closed(reason, extra = {}) {return {ready: false, blocked: true, reason, ...extra};}
+
+function geometry(view) {
+  return [view?.canvas, view?.width, view?.height, view?.stage?.width, view?.stage?.height,
+    view?.layout?.uiScale, view?.layout?.offsetX, view?.layout?.offsetY,
+    view?.layout?.halfWidth, view?.layout?.halfHeight];
+}
+
+function leaseFor(vm, token, initialView, initialControl) {
+  const expectedGeometry = geometry(initialView);
+  const information = variable(token.stage, BINDINGS.information)?.value;
+  const initialInformation = Array.isArray(information) ? information.slice(0, 20) : null;
+  return acquireCommunityMapLease(vm, {canHold() {
+    const current = source(vm);
+    if (!current || owner(current) !== token || Number(current.camera[17]) !== 1) return false;
+    const fresh = readView(vm);
+    if (!fresh || !geometry(fresh).every((value, index) => Object.is(value, expectedGeometry[index]))) return false;
+    const control = readMapControl(vm, fresh);
+    if (!control.ready || control.blocked || control.tab !== initialControl.tab || control.mapMode !== initialControl.mapMode) return false;
+    const latestInformation = variable(current.stage, BINDINGS.information)?.value;
+    // The background lease applies only to the same old normal-information
+    // record. A native source update wins even if its issue time is absent.
+    return latestInformation === information && initialInformation?.length === Math.min(20, latestInformation.length) &&
+      initialInformation.every((value, index) => Object.is(value, latestInformation[index]));
+  }});
+}
 
 /** Read current native priority without changing the project or starting timers.
  * Native timestamps use the native sensing_dayssince2000 reporter, never a
@@ -207,8 +233,10 @@ function pan(focus, vm, view, now) {
   const x = ((((lon + 44) % 360) + 360) % 360 - 180) * 10;
   const y = Math.log(Math.tan((45 + lat / 2) * Math.PI / 180)) * 572.9577951308232 - 374.04780730560344;
   if (!current || !Number.isFinite(x) || !Number.isFinite(y)) return {moved: false, reason: 'invalid-focus'};
-  const previous = {stage: current.stage, variable: current.cameraVariable, list: current.camera,
-    x, y, autoTime: current.autoTime, manualStamp: current.camera[21]};
+  const existingOwner = owner(current);
+  const previous = existingOwner && Object.is(existingOwner.x, x) && Object.is(existingOwner.y, y) ? existingOwner :
+    {stage: current.stage, variable: current.cameraVariable, list: current.camera,
+      x, y, autoTime: current.autoTime, manualStamp: current.camera[21]};
   // Validate all three ordinary data slots before the first write. A frozen or
   // changed schema must not receive a partial target or throw into the feed.
   if (![18,19,20].every(index => {const descriptor = Object.getOwnPropertyDescriptor(current.camera, index); return descriptor && 'value' in descriptor && descriptor.writable;})) return {moved: false, reason: 'camera-readonly'};
@@ -216,6 +244,9 @@ function pan(focus, vm, view, now) {
   current.camera[20] = y;
   current.camera[18] = 1;
   owned.set(current.runtime, previous);
+  // A narrow, reversible compiled-call hook holds only the idle five-second
+  // fit for at most 3 s. Unsupported runtimes retain the original pan behavior.
+  try {previous.lease = leaseFor(vm, previous, fresh, control);} catch {previous.lease?.release();}
   return {moved: true, reason: null, target: {x, y}};
 }
 
@@ -228,6 +259,7 @@ export function cancelCommunityFocus(vm = globalThis.vm) {
 }
 
 function cancel(vm) {
+  owned.get(vm?.runtime)?.lease?.release();
   const current = source(vm);
   if (!current) return {cancelled: false, reason: 'not-ready'};
   const token = owner(current);
