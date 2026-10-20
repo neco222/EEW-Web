@@ -1,0 +1,50 @@
+/* Reserve space outside the viewer. Keep this stylesheet after Packager CSS. */
+body.eew-community-layout #app,body.eew-community-layout #loading,body.eew-community-layout #error,body.eew-community-layout #launch{height:calc(100% - 26px);width:100%}
+body.eew-community-details #app,body.eew-community-details #loading,body.eew-community-details #error,body.eew-community-details #launch{width:calc(100% - 260px)}
+.eew-community,.eew-community-map,.eew-community-bubbles,.eew-community *,.eew-community-bubbles *{box-sizing:border-box}
+.eew-community{position:fixed;left:0;right:0;bottom:0;height:26px;z-index:30;color:#e7eff7;background:#101923;font:11px/1.45 system-ui,-apple-system,"BIZ UDPGothic",sans-serif;border-top:1px solid #ffffff20}
+.eew-community [hidden],.eew-community-map[hidden],.eew-community-bubbles[hidden]{display:none!important}
+.eew-community-panel{height:100%}
+.eew-community summary{height:25px;display:flex;align-items:center;gap:6px;padding:0 10px;cursor:pointer;list-style:none;user-select:none;white-space:nowrap}
+.eew-community summary::-webkit-details-marker{display:none}
+.eew-community summary:focus-visible,.eew-community button:focus-visible,.eew-community a:focus-visible{outline:2px solid #b7e5f3;outline-offset:-2px}
+.eew-community-name{font-weight:600}
+.eew-community-total{font-size:12px;color:#bdebf5;font-variant-numeric:tabular-nums}
+.eew-community-window{color:#a4b4c4;font-size:10px}
+.eew-community-caret{margin-left:auto;color:#a1b3c5;font-size:14px}
+.eew-community details[open] .eew-community-caret{transform:rotate(180deg)}
+.eew-community-dot{width:6px;height:6px;flex:none;border-radius:50%;background:#d4ad62}
+.eew-community[data-connection="live"] .eew-community-dot,.eew-community[data-connection="shared"] .eew-community-dot{background:#7edab4}
+.eew-community[data-connection="offline"] .eew-community-dot,.eew-community[data-connection="error"] .eew-community-dot{background:#df8a80}
+.eew-community-body{position:fixed;top:0;right:0;bottom:26px;width:260px;overflow:auto;padding:9px 12px 12px;background:#111b26;border-left:1px solid #ffffff20;overscroll-behavior:contain}
+.eew-community-body p{margin:7px 0}
+.eew-community-period{font-weight:700;font-size:13px;color:#e4eef7}
+.eew-community-status{font-size:10px;color:#adbfce;overflow-wrap:anywhere}
+.eew-community.is-demo .eew-community-status{color:#e8c987}
+.eew-community-toggle{display:flex;gap:6px;align-items:center;margin:11px 0;cursor:pointer}
+.eew-community input{accent-color:#9cdae9;margin:0}
+.eew-community-regions{border-top:1px solid #ffffff18}
+.eew-community-region{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #ffffff0b}
+.eew-community-region strong{font-variant-numeric:tabular-nums;white-space:nowrap;color:#c7e9f2}
+.eew-community-empty,.eew-community-caption{font-size:10px;color:#9dacbc}
+.eew-community-note{font-size:10px;color:#e7bf86}
+.eew-community-note:empty{display:none}
+.eew-community-links{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px}
+.eew-community a{font-size:10px;color:#bdd9e9;text-decoration:none}
+.eew-community button{font:inherit;font-size:10px;color:#d4e3ee;background:#263747;border:1px solid #496074;border-radius:5px;padding:4px 9px;cursor:pointer}
+.eew-community button:disabled{opacity:.45;cursor:default}
+.eew-community-demo{margin-top:9px;width:100%}
+.eew-community-live{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.eew-community-map,.eew-community-bubbles{position:fixed;pointer-events:none;overflow:hidden}
+.eew-community-map{z-index:11}
+.eew-community-bubbles{z-index:12}
+.eew-community-bubble{position:absolute;display:flex;flex-direction:column;justify-content:center;gap:1px;overflow:hidden;padding:5px 9px;border:1px solid #d8f4ff80;border-radius:10px;background:rgba(23,41,55,.42);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 3px 10px #0002,inset 0 1px 0 #ffffff16;color:#f0fbff;font:11px/1.15 system-ui,-apple-system,"BIZ UDPGothic",sans-serif;animation:eew-community-pop .16s ease-out both;transform-origin:center;will-change:opacity}
+.eew-community-bubble span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#d9edf6}
+.eew-community-bubble strong{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:20px;line-height:23px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:.01em;text-shadow:0 1px 3px #001a2a80}
+@keyframes eew-community-pop{from{transform:translateY(3px) scale(.93)}to{transform:translateY(0) scale(1)}}
+@media(prefers-reduced-motion:reduce){.eew-community-bubble{animation:none;will-change:auto}}
+@media(max-width:700px){
+  body.eew-community-details #app,body.eew-community-details #loading,body.eew-community-details #error,body.eew-community-details #launch{width:100%;height:calc(100% - 26px - min(180px,35vh))}
+  .eew-community-body{top:auto;left:0;right:0;bottom:26px;width:100%;height:min(180px,35vh);border-left:0;border-top:1px solid #ffffff20;padding:7px 12px}
+  .eew-community summary{padding:0 7px;gap:5px}
+}

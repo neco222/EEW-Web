@@ -2,6 +2,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "node scripts/serve.mjs docs",
+    "build": "node scripts/build-web.mjs",
+    "preview": "node scripts/serve.mjs dist --port=4174",
+    "test": "node --test tests/*.test.mjs",
     "tauri": "tauri",
     "custom-icon": "tauri icon src-tauri/icon-desktop.svg",
     "custom-js": "sed -i -E 's/globalThis\\.fetch\\.bind\\(globalThis\\)/window.__TAURI__.http.fetch/g; s/.serviceWorker. ?in navigator/false/g; $r src-tauri/fullscreen.js' docs/index.js"

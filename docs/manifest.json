@@ -52,7 +52,7 @@
       "type": "image/webp"
     }
   ],
-  "name": "リアルタイム地震ビューアー",
+  "name": "VR災害情報センター | EEW Web",
   "screenshots": [
     {
       "form_factor": "wide",
@@ -125,7 +125,7 @@
       "type": "image/png"
     }
   ],
-  "short_name": "リアルタイム地震ビューアー",
+  "short_name": "EEW Web",
   "start_url": "./",
   "theme_color": "#12151a"
 }
