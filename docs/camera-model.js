@@ -36,7 +36,8 @@ export function cameraLayout({width, height, expanded, communityDetails = false,
   // A narrow community drawer gets priority. Opening camera again closes that
   // drawer through its normal details/toggle event rather than stacking panels.
   if (communityDetails) return {mode: 'off', side: 0, bottom: 0, video: false};
-  if (width >= 320 && height >= 690) return {mode: 'bottom', side: 0, bottom: CAMERA_SHELF_HEIGHT, video: hasEvent};
+  if (width >= 320 && height >= 690) return {mode: 'bottom', side: 0,
+    bottom: Math.max(CAMERA_SHELF_HEIGHT,Math.min(470,height-26-400)), video: hasEvent};
   // A 200px-high YouTube player would consume the warning/history area here.
   // Keep a source link and controls, and do not create a hidden background video.
   return {mode: 'compact', side: 0, bottom: Math.min(106, Math.max(0, height - 350)), video: false};

@@ -32,6 +32,8 @@ function abortable(work, signal) {
  * live 561/9611 messages, including live delivery from a leader tab. previous
  * is captured immediately before ingestion with expired reports pruned. History,
  * reconnect backfills, cached replays, invalid messages, and duplicates are silent.
+ * onHistory(messages) supplies the original history/replay records separately;
+ * a log can show their individual reports without replaying a live notification.
  *
  * Where BOTH Web Locks and BroadcastChannel exist, the lock holder owns the
  * socket/history and other tabs receive its reports. A queued lock request is
@@ -44,6 +46,7 @@ export class CommunityFeed {
   #onChange;
   #onStatus;
   #onLive;
+  #onHistory;
   #fetch;
   #WebSocket;
   #now;
@@ -83,7 +86,7 @@ export class CommunityFeed {
   #handlers;
 
   constructor(options = {}) {
-    const { store, onChange = () => {}, onStatus = () => {}, onLive = () => {} } = options;
+    const { store, onChange = () => {}, onStatus = () => {}, onLive = () => {}, onHistory = () => {} } = options;
     if (!store || !['ingest', 'ingestHistory', 'snapshot'].every((name) => typeof store[name] === 'function')) {
       throw new TypeError('CommunityFeed requires a CommunityStore');
     }
@@ -91,6 +94,7 @@ export class CommunityFeed {
     this.#onChange = onChange;
     this.#onStatus = onStatus;
     this.#onLive = onLive;
+    this.#onHistory = onHistory;
     this.#fetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
     this.#WebSocket = options.WebSocket ?? globalThis.WebSocket;
     this.#now = options.now ?? Date.now;
@@ -336,6 +340,7 @@ export class CommunityFeed {
       const messages = results.flatMap((entry) => entry.status === 'fulfilled' ? entry.value : []);
       if (messages.length) {
         this.#store.ingestHistory(messages);
+        this.#history(messages);
         this.#remember(messages);
         this.#post({ type: 'messages', source: 'history', messages });
       }
@@ -410,7 +415,7 @@ export class CommunityFeed {
     if ((message.type === 'messages' || message.type === 'replay') && Array.isArray(message.messages) && message.messages.length <= MAX_RECENT_MESSAGES) {
       if (message.type === 'messages' && message.source === 'live') {
         for (const entry of message.messages) this.#ingestLive(entry, this.#now());
-      } else this.#store.ingestHistory(message.messages);
+      } else {this.#store.ingestHistory(message.messages);this.#history(message.messages);}
       this.#remember(message.messages);
       this.#change();
     }
@@ -438,6 +443,10 @@ export class CommunityFeed {
 
   #change() {
     try { this.#onChange(this.#store.snapshot()); } catch { /* UI errors must not interrupt the feed */ }
+  }
+
+  #history(messages) {
+    try { this.#onHistory(messages); } catch { /* Log rendering cannot stop reception. */ }
   }
 
   #ingestLive(message, receivedAt) {

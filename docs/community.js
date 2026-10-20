@@ -1,5 +1,6 @@
 import { CommunityStore } from './community-core.js';
 import { CommunityFeed } from './community-feed.js';
+import { CommunityLog } from './community-log.js';
 import { CommunityPulses, formatPulseCount } from './community-pulses.js';
 import { readView } from './viewer-bridge.js';
 import { layoutReportBubbles } from './report-bubbles.js';
@@ -15,6 +16,7 @@ export function startCommunity() {
   const demo = new URL(location.href).searchParams.get('communityDemo') === '1';
   const store = new CommunityStore();
   const pulses = new CommunityPulses();
+  const log = new CommunityLog();
   const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   let state = store.snapshot();
   let status = { state: 'connecting', message: '接続しています' };
@@ -32,6 +34,8 @@ export function startCommunity() {
   let lastLayoutKey = '';
   let lastObstacles = null;
   let placements = [];
+  let logTimer = null;
+  let lastLog = '';
   const nodes = new Map();
 
   const host = document.createElement('section');
@@ -71,6 +75,24 @@ export function startCommunity() {
   const refreshButton = host.querySelector('.eew-community-refresh');
   const demoButton = host.querySelector('.eew-community-demo');
   checkbox.checked = enabled;
+
+  function publishLog(force = false) {
+    if (disposed) return;
+    const snapshot = log.snapshot();
+    const detail = {entries:snapshot.entries, connection:demo?'demo':status.state,
+      message:demo?'デモ表示・実際の投稿ではありません':label(status.message), demo};
+    const key = JSON.stringify(detail);
+    if (!force && key === lastLog) return;
+    lastLog = key;
+    document.dispatchEvent(new CustomEvent('eew-community-log', {detail}));
+  }
+  function queueLog() {
+    // Coalesce a storm of posts without adding an animation/render loop.
+    if (logTimer !== null || !running || document.hidden || disposed) return;
+    logTimer = setTimeout(() => {logTimer = null;publishLog();}, 80);
+  }
+  const requestLog = () => publishLog(true);
+  document.addEventListener('eew-community-log-request', requestLog);
 
   function relayout() {
     // Packager resizes its canvas synchronously; Scratch's map/layout lists
@@ -212,7 +234,7 @@ export function startCommunity() {
   function tick() {
     timer = null;
     if (!running || document.hidden) { clearVisuals(); return; }
-    if (!demo && Date.now() - lastPrune >= 5000) { lastPrune = Date.now(); state = store.snapshot(); updatePanel(); }
+    if (!demo && Date.now() - lastPrune >= 5000) { lastPrune = Date.now(); state = store.snapshot(); updatePanel(); queueLog(); }
     lastFrameAt = performance.now();
     render();
     const active = placements.length || awaitingGeometry && pulses.snapshot().length;
@@ -231,13 +253,15 @@ export function startCommunity() {
   function pause() {
     running = false; clearTimeout(timer); timer = null;
     clearTimeout(settleTimer); settleTimer = null;
+    clearTimeout(logTimer); logTimer = null;
     feed?.stop(); clearVisuals();
   }
   const feed = demo ? null : new CommunityFeed({
     store,
     onChange: (next) => { state = next; updatePanel(); wake(); },
-    onStatus: (next) => { status = next; updatePanel(); },
-    onLive: (next, detail) => { if (enabled) pulses.ingestLive(next, detail); wake(); },
+    onStatus: (next) => { status = next; updatePanel(); queueLog(); },
+    onLive: (next, detail) => { log.ingestLive(next, detail);queueLog();if (enabled) pulses.ingestLive(next, detail); wake(); },
+    onHistory: (messages) => {log.ingestHistory(messages);queueLog();},
   });
   checkbox.addEventListener('change', () => {
     enabled = checkbox.checked; safeWrite('eew-community-bursts', String(enabled));
@@ -248,7 +272,7 @@ export function startCommunity() {
   details.addEventListener('toggle', () => {
     document.body.classList.toggle('eew-community-details', details.open); relayout(); wake();
   });
-  const visibility = () => { if (document.hidden) { clearTimeout(timer); timer = null; clearVisuals(); } else wake(); };
+  const visibility = () => { if (document.hidden) { clearTimeout(timer); timer = null;clearTimeout(logTimer);logTimer = null; clearVisuals(); } else {wake();queueLog();} };
   const resize = () => { relayout(); wake(); };
   document.addEventListener('visibilitychange', visibility);
   document.addEventListener('eew-layout-change', resize);
@@ -267,13 +291,14 @@ export function startCommunity() {
     refreshButton.disabled = true;
     demoButton.addEventListener('click', () => { demoPending = true; pulses.clear(); wake(); });
   }
-  updatePanel(); start();
+  updatePanel(); start();queueLog();
   return {
     stop() {
       if (disposed) return;
       disposed = true; pause();
       document.removeEventListener('visibilitychange', visibility);
       document.removeEventListener('eew-layout-change', resize);
+      document.removeEventListener('eew-community-log-request', requestLog);
       removeEventListener('resize', resize); removeEventListener('pagehide', pause); removeEventListener('pageshow', start);
       host.remove(); overlay.remove(); bubbles.remove();
       document.body.classList.remove('eew-community-layout', 'eew-community-details');

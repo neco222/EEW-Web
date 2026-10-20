@@ -66,6 +66,7 @@ function harness(extra = {}) {
   const statuses = [];
   const changes = [];
   const live = [];
+  const history = [];
   const calls = [];
   const fetch = (url, options) => { calls.push({ url, options }); return extra.fetch ? extra.fetch(url, options) : Promise.resolve(response()); };
   const store = new CommunityStore({ now: clock.now });
@@ -75,9 +76,10 @@ function harness(extra = {}) {
     eventTarget, navigator: { onLine: true }, locks: null, BroadcastChannel: null,
     onChange: (snapshot) => changes.push(snapshot), onStatus: (status) => statuses.push(status),
     onLive: (snapshot, detail) => live.push({ snapshot, ...detail }),
+    onHistory: (messages) => history.push(messages),
     ...extra.options,
   });
-  return { clock, WebSocket, store, feed, statuses, changes, live, calls, eventTarget };
+  return { clock, WebSocket, store, feed, statuses, changes, live, history, calls, eventTarget };
 }
 
 test('start is inert until called and idempotent; startup makes exactly two API requests and one socket', async () => {
@@ -508,4 +510,41 @@ test('a rejected sharing lock falls back to one direct connection and still clea
   assert.equal(h.statuses.at(-1).role, 'direct');
   assert.equal(BroadcastChannel.channels.size, 0);
   h.feed.stop();
+});
+
+test('raw history reaches the log without becoming live notifications or adding network requests', async () => {
+  const posted=report('history-row');
+  const h=harness({fetch:url=>Promise.resolve(response(url.includes('codes=561')?[posted]:[evaluation]))});
+  h.feed.start();await flush();
+  assert.deepEqual(h.history,[[evaluation,posted]]);
+  assert.equal(h.live.length,0);
+  assert.equal(h.calls.length,2);
+  h.WebSocket.instances[0].open();h.WebSocket.instances[0].message(posted);
+  assert.equal(h.live.length,0);
+  h.WebSocket.instances[0].message(report('fresh-row'));
+  assert.equal(h.live.length,1);
+  assert.equal(h.history.length,1);
+  h.feed.stop();
+});
+
+test('a shared follower can reconstruct raw log history while cached replay stays quiet',async()=>{
+  const clock=new Clock(),locks=new FakeLocks(),BroadcastChannel=channelFactory(),WebSocket=socketFactory();
+  const options={locks,BroadcastChannel};
+  const a=harness({clock,WebSocket,options});a.feed.start();await flush();
+  WebSocket.instances[0].open();WebSocket.instances[0].message(report('before-follower'));
+  const b=harness({clock,WebSocket,options});b.feed.start();await flush();
+  assert.ok(b.history.flat().some(entry=>entry.id==='before-follower'));
+  assert.equal(b.live.length,0);assert.equal(b.calls.length,0);assert.equal(WebSocket.instances.length,1);
+  WebSocket.instances[0].message(report('after-follower'));await flush();
+  assert.equal(b.live.length,1);assert.equal(b.live[0].message.id,'after-follower');
+  a.feed.stop();b.feed.stop();await flush();
+});
+
+test('a failed log callback cannot stop initial history, live transport, or cleanup',async()=>{
+  const h=harness({fetch:url=>Promise.resolve(response(url.includes('codes=561')?[report()]:[])),options:{onHistory(){throw new Error('Log unavailable');}}});
+  h.feed.start();await flush();h.WebSocket.instances[0].open();
+  assert.equal(h.store.snapshot().total,1);assert.equal(h.statuses.at(-1).state,'live');
+  h.WebSocket.instances[0].message(report('next'));
+  assert.equal(h.store.snapshot().total,2);assert.equal(h.live.length,1);
+  h.feed.stop();assert.equal(h.clock.timers.size,0);
 });

@@ -48,3 +48,12 @@ test('uses the official privacy-enhanced embed with an origin/referrer-compatibl
   assert.throws(()=>youtubeEmbedURL('../bad','https://example.test'),TypeError);
   assert.throws(()=>youtubeEmbedURL('abcdefghijk','file:///tmp/example'),TypeError);
 });
+
+test('tall portrait screens reserve log space while retaining 400px of native warnings',()=>{
+  const tall=cameraLayout({width:390,height:844,expanded:true,hasEvent:true});
+  assert.ok(tall.bottom>=390);assert.ok(844-26-tall.bottom>=400);
+  const short=cameraLayout({width:390,height:700,expanded:true,hasEvent:true});
+  assert.equal(short.bottom,310);assert.ok(700-26-short.bottom>=350);
+  const veryTall=cameraLayout({width:390,height:1200,expanded:true,hasEvent:true});
+  assert.equal(veryTall.bottom,470);
+});
