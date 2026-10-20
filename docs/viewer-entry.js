@@ -7,6 +7,9 @@ import('./community.js').then(({startCommunity}) => startCommunity()).catch(erro
 import('./watermark.js').then(({startWatermark}) => startWatermark()).catch(error => {
   console.error('Watermark could not start', error);
 });
+import('./camera.js').then(({startCameras}) => startCameras()).catch(error => {
+  console.error('Nearby camera display could not start', error);
+});
 import('./index.js').then(() => {
   if (globalThis.vm) installRuntimeEfficiency(globalThis.vm);
 }).catch(error => {

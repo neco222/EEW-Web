@@ -232,6 +232,61 @@ test("concurrent update requests share one complete download", async () => {
   assert.equal(f.count("index.js") - count, 1);
 });
 
+for (const legacy of ["version-only", "older-manifest"]) {
+  test(`a same-hash ${legacy} completion marker fills every new module before publishing completion`, async () => {
+    const f = fixture();
+    await f.worker().lifecycle("install");
+    const release = f.release(A);
+    const completeURL = f.absolute("__sw__/complete");
+    const expected = await release.get(completeURL).clone().text();
+    const newFiles = ["camera.js", "camera.css", "camera-model.js", "camera-event.js", "camera-player.js", "live-cameras.js"];
+    const oldManifest = JSON.parse(expected);
+    oldManifest.files = oldManifest.files.filter((file) => !newFiles.includes(file));
+    const oldMarker = legacy === "version-only" ? A : JSON.stringify(oldManifest);
+    for (const file of newFiles) release.delete(f.absolute(file));
+    release.set(completeURL, new Response(oldMarker));
+
+    // A failed repair must not publish a marker claiming the new shell is ready.
+    f.failures.set("camera-player.js", 503);
+    await assert.rejects(f.worker().lifecycle("install"), /Static file unavailable: camera-player.js/);
+    assert.equal(await release.get(completeURL).clone().text(), oldMarker);
+    assert.equal(release.has(f.absolute("camera-player.js")), false);
+    f.failures.clear();
+
+    let reached, resume;
+    const waiting = new Promise((resolve) => { reached = resolve; });
+    const blocked = new Promise((resolve) => { resume = resolve; });
+    const before = new Map(newFiles.map((file) => [file, f.count(file)]));
+    f.onFetch((path) => {
+      if (path === "camera-player.js") { reached(); return blocked; }
+    });
+    const worker = f.worker();
+    const installing = worker.lifecycle("install");
+    await waiting;
+    assert.equal(await release.get(completeURL).clone().text(), oldMarker);
+    resume();
+    await installing;
+    assert.equal(await release.get(completeURL).clone().text(), expected);
+    for (const file of newFiles) {
+      assert.equal(f.count(file) - before.get(file), 1, `${file} must be included in the repaired snapshot`);
+      assert.equal(await release.get(f.absolute(file)).clone().text(), `${A}:${file}`);
+    }
+    f.onFetch(undefined);
+    f.offline();
+    await navigate(worker, "camera-offline");
+    for (const file of newFiles) assert.equal(await (await worker.request(file, { clientId: "camera-offline" })).text(), `${A}:${file}`);
+  });
+}
+
+test("a matching hash and shell manifest reuses the completed snapshot", async () => {
+  const f = fixture();
+  await f.worker().lifecycle("install");
+  const count = f.count("index.js");
+  await f.worker().lifecycle("install");
+  assert.equal(f.count("index.js"), count);
+  assert.equal(f.count("hash"), 3); // The second worker only checks the current hash.
+});
+
 test("unsuccessful HTTP responses and failed cache writes do not poison asset caches", async () => {
   const f = fixture();
   const worker = f.worker();

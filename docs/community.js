@@ -251,6 +251,7 @@ export function startCommunity() {
   const visibility = () => { if (document.hidden) { clearTimeout(timer); timer = null; clearVisuals(); } else wake(); };
   const resize = () => { relayout(); wake(); };
   document.addEventListener('visibilitychange', visibility);
+  document.addEventListener('eew-layout-change', resize);
   addEventListener('resize', resize);
   addEventListener('pagehide', pause);
   addEventListener('pageshow', start);
@@ -272,6 +273,7 @@ export function startCommunity() {
       if (disposed) return;
       disposed = true; pause();
       document.removeEventListener('visibilitychange', visibility);
+      document.removeEventListener('eew-layout-change', resize);
       removeEventListener('resize', resize); removeEventListener('pagehide', pause); removeEventListener('pageshow', start);
       host.remove(); overlay.remove(); bubbles.remove();
       document.body.classList.remove('eew-community-layout', 'eew-community-details');

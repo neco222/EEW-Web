@@ -26,6 +26,12 @@ const shellFiles = [
   "viewer-obstacles.js",
   "community-pulses.js",
   "watermark.js",
+  "camera.js",
+  "camera.css",
+  "camera-model.js",
+  "camera-event.js",
+  "camera-player.js",
+  "live-cameras.js",
   "images/icon.svg",
   "images/loading.jpg",
   "images/appicon192.webp",
@@ -33,6 +39,7 @@ const shellFiles = [
   "images/vr-disaster-watermark.webp",
 ];
 const shellURLs = new Set(shellFiles.map(localURL));
+const completeMarker = (version) => JSON.stringify({ version, files: shellFiles });
 const clientReleases = new Map();
 let refreshing;
 
@@ -70,7 +77,10 @@ async function refreshRelease() {
     const hashResponse = await freshFetch(hashURL);
     const version = await readHash(hashResponse);
     const release = await caches.open(`${releasePrefix}${version}`);
-    if (!await release.match(completeURL)) {
+    const complete = await release.match(completeURL);
+    // An older worker can cache this same hash using a shorter shell list.
+    // Its completion marker does not prove that the new modules are present.
+    if (!usable(complete) || await complete.text() !== completeMarker(version)) {
       // Finish every write before publishing the new snapshot. An interrupted
       // update never becomes the active release and is retried on the next visit.
       const results = await Promise.allSettled(shellFiles.map(async (path) => {
@@ -85,7 +95,7 @@ async function refreshRelease() {
         throw new Error("Release changed while downloading");
       }
       await release.put(hashURL, hashResponse);
-      await release.put(completeURL, new Response(version));
+      await release.put(completeURL, new Response(completeMarker(version)));
     }
     const metadata = await caches.open(metadataName);
     await metadata.put(activeURL, new Response(version));

@@ -1,0 +1,43 @@
+/* Camera space belongs outside the original viewer; no history/map overlays. */
+body.eew-camera-side{--eew-camera-width:336px;--eew-camera-card-height:310px}
+body.eew-camera-side #app,body.eew-camera-side #loading,body.eew-camera-side #error,body.eew-camera-side #launch{width:calc(100% - var(--eew-camera-width));height:calc(100% - 26px)}
+body.eew-camera-bottom #app,body.eew-camera-bottom #loading,body.eew-camera-bottom #error,body.eew-camera-bottom #launch,
+body.eew-camera-compact #app,body.eew-camera-compact #loading,body.eew-camera-compact #error,body.eew-camera-compact #launch{width:100%;height:calc(100% - 26px - var(--eew-camera-bottom))}
+body.eew-camera-side.eew-community-details .eew-community-body{top:var(--eew-camera-card-height);width:var(--eew-camera-width);bottom:26px}
+body.eew-camera-side.eew-community-details .eew-camera-panel{height:var(--eew-camera-card-height);bottom:auto;overflow:hidden}
+.eew-camera-panel,.eew-camera-panel *{box-sizing:border-box}
+.eew-camera-panel[hidden],.eew-camera-panel [hidden]{display:none!important}
+.eew-camera-panel{position:fixed;z-index:20;color:#e8f2fa;background:#101b27;font:11px/1.4 system-ui,-apple-system,"BIZ UDPGothic",sans-serif;overflow:auto;overscroll-behavior:contain}
+body.eew-camera-side .eew-camera-panel{top:0;right:0;bottom:26px;width:var(--eew-camera-width);border-left:1px solid #5d7c9440}
+body.eew-camera-bottom .eew-camera-panel,body.eew-camera-compact .eew-camera-panel{left:0;right:0;bottom:26px;height:var(--eew-camera-bottom);border-top:1px solid #5d7c9440}
+.eew-camera-heading{height:32px;display:flex;align-items:center;gap:7px;padding:0 10px}
+.eew-camera-heading h2{flex:1;margin:0;min-width:0;font-size:12px;font-weight:650;white-space:nowrap}
+.eew-camera-heading label{display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:10px;color:#bccedf}
+.eew-camera-heading input{margin:0;accent-color:#9cdae9}
+.eew-camera-panel button,.eew-camera-panel select{font:inherit;color:#e2eff8;background:#253849;border:1px solid #536f83;border-radius:4px;cursor:pointer}
+.eew-camera-panel button{padding:3px 7px;white-space:nowrap}
+.eew-camera-panel button:disabled{opacity:.5;cursor:default}
+.eew-camera-close{border:0!important;background:transparent!important;font-size:20px!important;padding:0 2px!important;line-height:22px}
+.eew-camera-event{height:22px;margin:0;padding:1px 10px;color:#bad2e4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eew-camera-player{height:200px;min-height:200px;width:calc(100% - 20px);min-width:200px;margin:0 10px;background:#05090e}
+.eew-camera-player iframe{display:block;width:100%;height:100%;border:0;min-width:200px;min-height:200px}
+.eew-camera-meta{height:24px;display:flex;align-items:center;gap:6px;padding:0 10px;color:#a8bfce}
+.eew-camera-credit{min-width:0;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.eew-camera-status{flex:none;font-size:10px;color:#bddfcf}
+.eew-camera-status[data-error="true"]{color:#e5c386}
+.eew-camera-controls{height:32px;display:flex;align-items:center;gap:6px;padding:2px 10px 5px}
+.eew-camera-controls select{flex:1;min-width:0;padding:3px 4px}
+.eew-camera-controls a{flex:none;color:#b9ddec;text-decoration:none;white-space:nowrap;font-size:10px}
+.eew-camera-description{margin:12px 10px;color:#a7bdcf;font-size:11px;line-height:1.7}
+.eew-camera-preview{margin:0 10px 10px}
+.eew-camera-control{position:fixed;z-index:32;right:5px;bottom:3px;height:20px;max-width:76px;padding:0 7px;color:#d1e4ee;background:#223747;border:1px solid #526b7e;border-radius:4px;font:10px/18px system-ui,sans-serif;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eew-camera-control[data-available="true"]{border-color:#6b9a99;color:#b8eadb}
+body.eew-camera-enabled .eew-community summary{padding-right:92px}
+body.eew-camera-enabled .eew-community-window{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.eew-camera-panel button:focus-visible,.eew-camera-panel a:focus-visible,.eew-camera-panel select:focus-visible,.eew-camera-control:focus-visible{outline:2px solid #bce8f4;outline-offset:1px}
+body.eew-camera-compact .eew-camera-player,body.eew-camera-compact .eew-camera-status{display:none!important}
+body.eew-camera-compact .eew-camera-meta{height:22px}
+body.eew-camera-compact .eew-camera-controls{height:28px}
+body.eew-camera-bottom .eew-camera-description,body.eew-camera-compact .eew-camera-description{display:none}
+body.eew-camera-bottom .eew-camera-heading{height:31px}
+@media(max-width:355px){body.eew-camera-enabled .eew-community-window{display:none}.eew-camera-heading label{font-size:9px}.eew-camera-heading{gap:4px}}
