@@ -111,14 +111,21 @@ export function startCameraMap({onSelect = noop, catalog = LIVE_CAMERAS,
         top:Math.min(y,point.anchor.y)-2,right:Math.max(x,point.anchor.x)+2,bottom:Math.max(y,point.anchor.y)+2});
     }
     if (!lines.length) return;
-    context.save();context.beginPath();context.rect(view.viewport.left,view.viewport.top,view.viewport.width,view.viewport.height);context.clip();
+    // Use the same native UI margins as the marker boxes. A displaced point
+    // near the map edge must not draw its leader through the clock or toolbar.
+    const scaleX=Math.max(1,view.layout.uiScale*view.width/view.stage.width);
+    const scaleY=Math.max(1,view.layout.uiScale*view.height/view.stage.height);
+    const left=view.viewport.left+30*scaleX,top=view.viewport.top+34*scaleY;
+    context.save();context.beginPath();context.rect(left,top,Math.max(0,view.viewport.right-left),Math.max(0,view.viewport.bottom-top));context.clip();
     context.lineWidth=1;
     for (const line of lines) {
       context.strokeStyle=line.id===selection.id&&selection.playing?'rgba(134,224,172,.75)':'rgba(177,207,224,.6)';
       context.beginPath();context.moveTo(line.anchor.x,line.anchor.y);context.lineTo(line.x,line.y);context.stroke();
     }
     // Thin leaders, as well as boxes, yield to native values and report bubbles.
-    for (const rect of protectedRects) {
+    const toolbar={left:view.viewport.left,top:view.viewport.bottom-116*scaleY,
+      width:44*scaleX,height:116*scaleY};
+    for (const rect of [...protectedRects,toolbar]) {
       const left=Number(rect.left??rect.x),top=Number(rect.top??rect.y);
       const width=Number(rect.width??Number(rect.right)-left),height=Number(rect.height??Number(rect.bottom)-top);
       if (![left,top,width,height].every(Number.isFinite)) continue;
