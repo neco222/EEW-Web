@@ -1,0 +1,12 @@
+/* Interactive only at catalogue icons; the surrounding map keeps its input. */
+.eew-camera-map,.eew-camera-map *{box-sizing:border-box}
+.eew-camera-map{position:fixed;z-index:10;overflow:hidden;pointer-events:none}
+.eew-camera-map[hidden],.eew-camera-map [hidden]{display:none!important}
+.eew-camera-map-leaders{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.eew-camera-map-marker{position:absolute;display:grid;place-items:center;margin:0;padding:3px;border:1px solid #a7c8d69e;border-radius:6px;background:#162a37dc;color:#d6e7ef;box-shadow:0 1px 3px #0006;pointer-events:auto;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none;line-height:1}
+.eew-camera-map-marker svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linejoin:round;stroke-linecap:round;pointer-events:none}
+.eew-camera-map-marker:hover{background:#294858;color:#fff;border-color:#e3f3fa}
+.eew-camera-map-marker[data-selected="true"]{border-color:#b9dfff;box-shadow:0 0 0 1px #9fcdf27a,0 1px 3px #0006}
+.eew-camera-map-marker[data-playing="true"]{color:#b8f4ce;border-color:#83dea8;background:#153c2de8;box-shadow:0 0 0 1px #70d39978,0 1px 3px #0006}
+.eew-camera-map-marker:focus-visible{outline:2px solid #e3f4ff;outline-offset:2px}
+@media(prefers-contrast:more){.eew-camera-map-marker{background:#0d1b25;border-color:#dbeef8;color:#fff}}

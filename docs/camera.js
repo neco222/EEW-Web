@@ -6,9 +6,12 @@ import {CameraLifetime} from './camera-lifetime.js';
 import {CommunityCameraPolicy,communityCameraAllowed,communityCameraMustYield} from './camera-community.js';
 import {readMapControl} from './community-map-bridge.js';
 import {CommunityLogActivity} from './community-log-activity.js';
+import {startCameraMap} from './camera-map.js';
+import {selectMapCamera} from './camera-map-selection.js';
 
 const stored = () => {try{return localStorage.getItem('eew-camera-auto') !== 'false';}catch{return true;}};
 const persist = value => {try{localStorage.setItem('eew-camera-auto',String(value));}catch{/* optional storage */}};
+const storedMap = () => {try{return localStorage.getItem('eew-camera-map') !== 'false';}catch{return true;}};
 const regionName = event => String(event?.name || '震源付近');
 
 export function startCameras() {
@@ -25,6 +28,9 @@ export function startCameras() {
   let layout={mode:'off',video:false};
   let layoutKey='';
   let shownVideo=null;
+  let playing=false;
+  let manualCameraUntil=null;
+  let cameraMap=null;
   let stopped=false;
   let suspended=false;
   let timer=null;
@@ -37,14 +43,15 @@ export function startCameras() {
   control.type='button';control.className='eew-camera-control';control.textContent='カメラ';
   control.setAttribute('aria-label','ライブカメラを開く');control.setAttribute('aria-expanded','false');
   const panel=document.createElement('aside');
-  panel.className='eew-camera-panel';panel.hidden=true;panel.setAttribute('aria-label','近くのライブカメラ');
-  panel.innerHTML=`<div class="eew-camera-card"><div class="eew-camera-heading"><h2>近くのライブカメラ</h2><label><input type="checkbox">自動表示</label><button type="button" class="eew-camera-close" aria-label="カメラを縮小" title="カメラを縮小">×</button></div>
+  panel.className='eew-camera-panel';panel.hidden=true;panel.setAttribute('aria-label','ライブカメラ');
+  panel.innerHTML=`<div class="eew-camera-card"><div class="eew-camera-heading"><h2>ライブカメラ</h2><label><input class="eew-camera-auto" type="checkbox">自動表示</label><label><input class="eew-camera-map-toggle" type="checkbox" aria-label="地図にカメラ位置を表示">地図</label><button type="button" class="eew-camera-close" aria-label="カメラを縮小" title="カメラを縮小">×</button></div>
     <p class="eew-camera-event"></p>
     <div class="eew-camera-player" hidden></div>
     <div class="eew-camera-meta" hidden><span class="eew-camera-credit"></span><span class="eew-camera-status" role="status"></span><button type="button" class="eew-camera-play" hidden>再生</button></div>
     <div class="eew-camera-controls" hidden><select aria-label="近くのカメラを選ぶ"></select><button type="button" class="eew-camera-next">次のカメラ</button><a target="_blank" rel="noopener noreferrer">提供元↗</a></div>
     <p class="eew-camera-description"></p><button type="button" class="eew-camera-preview" disabled>最新の地震付近を見る</button></div>`;
-  const auto=panel.querySelector('input');auto.checked=automatic;
+  const auto=panel.querySelector('.eew-camera-auto');auto.checked=automatic;
+  const mapToggle=panel.querySelector('.eew-camera-map-toggle');mapToggle.checked=storedMap();
   const eventNode=panel.querySelector('.eew-camera-event');
   const playerNode=panel.querySelector('.eew-camera-player');
   const meta=panel.querySelector('.eew-camera-meta');
@@ -60,11 +67,14 @@ export function startCameras() {
   document.body.append(panel,control);
   document.body.classList.add('eew-camera-enabled');
 
-  function setStatus(text,error=false){
+  function publishCameraSelection(){cameraMap?.setSelection({id:selected?.id||null,playing:playing&&!panel.hidden});}
+  function setStatus(text,error=false,isPlaying=false){
+    playing=isPlaying;
     status.textContent=text;status.dataset.error=String(error);
     panel.dataset.playback=error?'error':text;
+    publishCameraSelection();
   }
-  function resetPlayer(){player.destroy();shownVideo=null;playerNode.hidden=true;play.hidden=true;}
+  function resetPlayer(){player.destroy();shownVideo=null;playing=false;playerNode.hidden=true;play.hidden=true;publishCameraSelection();}
   function nextCamera(){
     const start=choices.findIndex(camera=>camera.id===selected?.id);
     for(let offset=1;offset<=choices.length;offset++){
@@ -78,7 +88,7 @@ export function startCameras() {
     onStatus(update){
       if(stopped||!shownVideo)return;
       const texts={loading:'接続中',playing:'再生中',paused:'一時停止',blocked:'再生を押してください',ended:'配信終了',error:'再生できません'};
-      setStatus(texts[update.state]||'接続中',update.state==='error'||update.state==='ended');
+      setStatus(texts[update.state]||'接続中',update.state==='error'||update.state==='ended',update.state==='playing');
       play.textContent='再生';play.hidden=update.state!=='blocked'&&update.state!=='paused';
       if(update.state==='ended'&&selected){failed.add(selected.id);queueMicrotask(()=>{if(!stopped)nextCamera();});}
     },
@@ -91,6 +101,8 @@ export function startCameras() {
       else{resetPlayer();setStatus('提供元で確認できます',true);play.textContent='再試行';play.hidden=false;description.textContent='この画面では映像を再生できません。提供元で確認できます。';}
     },
   });
+  cameraMap=startCameraMap({onSelect:selectFromMap,catalog:LIVE_CAMERAS});
+  cameraMap.setEnabled(mapToggle.checked);
 
   function renderInfo(){
     const key=JSON.stringify([current?.id,current?.name,current?.kind,current?.manual,selected?.id,
@@ -99,11 +111,11 @@ export function startCameras() {
     lastInfoKey=key;
     control.dataset.available=String(Boolean(selected));
     control.title=current?`${regionName(current)} · ${selected?.label||'近くに登録カメラがありません'}`:'地震情報に合わせて近くのライブカメラを表示します';
-    eventNode.textContent=current?`${current.kind==='community'?'揺れの報告':current.manual?'地震履歴':current.kind==='eew'?'緊急地震速報':'地震情報'} · ${regionName(current)}`:'地震情報・新しい揺れの報告を待っています';
+    eventNode.textContent=current?`${current.kind==='camera'?'選択したカメラ':current.kind==='community'?'揺れの報告':current.manual?'地震履歴':current.kind==='eew'?'緊急地震速報':'地震情報'} · ${current.kind==='camera'?selected?.label||regionName(current):regionName(current)}`:'地震情報・新しい揺れの報告を待っています';
     eventNode.title=eventNode.textContent;
     select.replaceChildren(...choices.map(camera=>{
       const option=document.createElement('option');option.value=camera.id;
-      option.textContent=`${camera.label} · 約${Math.round(camera.distanceKm)}km`;return option;
+      option.textContent=current?.kind==='camera'?camera.label:`${camera.label} · 約${Math.round(camera.distanceKm)}km`;return option;
     }));
     if(selected)select.value=selected.id;
     meta.hidden=controls.hidden=!selected;
@@ -112,11 +124,12 @@ export function startCameras() {
     source.href=selected?.sourceURL||'https://www.youtube.com/';
     source.title=selected?`${selected.owner}の配信ページを開く`:'';
     const location=current?.kind==='community'?'投稿地域の代表点':'震源';
-    credit.textContent=selected?`${selected.owner} · ${location}から約${Math.round(selected.distanceKm)}km`:'';
+    credit.textContent=selected?current?.kind==='camera'?`${selected.owner} · 対象地域の概算位置`:`${selected.owner} · ${location}から約${Math.round(selected.distanceKm)}km`:'';
     credit.title=credit.textContent;
     if(!current)description.textContent='地震情報や新しい揺れの報告に近い登録カメラを表示します。映像は音声を消して再生します。';
     else if(!selected)description.textContent=`${location}から300km以内に、登録されているカメラがありません。`;
     else if(layout.mode==='compact')description.textContent='提供元で映像を開けます。';
+    else if(current.kind==='camera')description.textContent=`アイコンは撮影対象地域のおおよその位置です。設置場所を示すものではありません。${selected.maySwitchView?'番組により撮影場所が切り替わる場合があります。':''}`;
     else if(current.kind==='community')description.textContent='ユーザーの「揺れた」投稿に近い配信です。震度や震源を示すものではありません。';
     else if(!failed.has(selected.id))description.textContent=selected.maySwitchView?'提供元の番組により撮影場所が切り替わる場合があります。':'映像はカメラの提供元から配信されます。';
     panel.dataset.eventId=current?.id||'';panel.dataset.eventKind=current?.kind||'';panel.dataset.cameraId=selected?.id||'';
@@ -149,6 +162,7 @@ export function startCameras() {
       renderInfo();
     }
     ensurePlayer();
+    publishCameraSelection();
   }
   function notifyViewerLayout(){
     // The independent log owns the combined reservation. Opening a camera in
@@ -169,8 +183,24 @@ export function startCameras() {
     selected=camera;description.textContent='';renderInfo();syncLayout();
     if(current?.kind==='community')community.select(camera.id);
   }
+  function selectFromMap(id){
+    if(stopped||suspended||document.hidden)return;
+    // Refresh native information first; a manual choice must retain an active
+    // earthquake session and its original automatic closing deadline.
+    tick();
+    const choice=selectMapCamera(id,{current,choices,selected,manualUntil:manualCameraUntil},LIVE_CAMERAS);
+    if(!choice)return;
+    if(choice.current.kind==='camera'){discardReports();community.cancel();lifetime.clear();}
+    current=choice.current;choices=choice.choices;selected=choice.selected;manualCameraUntil=choice.manualUntil;
+    failed.delete(selected.id);
+    const details=document.querySelector('.eew-community-panel');
+    if(!(innerWidth>=960&&innerHeight>=500)&&details?.open)details.open=false;
+    expanded=true;renderInfo();syncLayout();
+    if(current.kind==='community')community.select(selected.id);
+  }
   function adopt(event){
     discardReports();community.cancel();
+    manualCameraUntil=null;
     const prior=current?.id===event.id?selected?.id:null;
     current=event;choices=rankCameras(event,LIVE_CAMERAS);failed.clear();
     selected=choices.find(camera=>camera.id===prior)||choices[0]||null;
@@ -179,7 +209,7 @@ export function startCameras() {
     renderInfo();syncLayout();
   }
   function clearCurrent(){
-    current=null;choices=[];selected=null;expanded=false;failed.clear();
+    current=null;choices=[];selected=null;expanded=false;manualCameraUntil=null;failed.clear();
     lifetime.clear();
     discardReports();community.cancel();
     resetPlayer();renderInfo();syncLayout();
@@ -187,6 +217,7 @@ export function startCameras() {
   function tick(){
     clearTimeout(timer);timer=null;
     if(stopped||suspended||document.hidden)return;
+    if(current?.kind==='camera'&&(!Number.isFinite(manualCameraUntil)||Date.now()<current.time||Date.now()>=manualCameraUntil))clearCurrent();
     try{logActivity.update(globalThis.vm);publishLogActivity();}
     catch{logActivity.reset();publishLogActivity();}
     try{
@@ -207,7 +238,7 @@ export function startCameras() {
       if(current?.kind==='community'){
         const state=readMapControl(globalThis.vm);
         if(communityCameraMustYield(state)||community.snapshot().close)clearCurrent();
-      }else if(current&&lifetime.update(monitor.status(current.id)).close)clearCurrent();
+      }else if(current&&current.kind!=='camera'&&lifetime.update(monitor.status(current.id)).close)clearCurrent();
       syncLayout();
     }catch(error){console.warn('Camera earthquake monitor could not update',error);}
     timer=setTimeout(tick,1000);
@@ -227,7 +258,7 @@ export function startCameras() {
     if(stopped||suspended||document.hidden||!automatic||!communityCameraAllowed(readMapControl(globalThis.vm),current)){discardReports();return;}
     const choice=community.take();
     if(choice){
-      current=choice.event;choices=choice.choices;selected=choice.selected;failed.clear();lifetime.clear();
+      current=choice.event;choices=choice.choices;selected=choice.selected;manualCameraUntil=null;failed.clear();lifetime.clear();
       expanded=true;renderInfo();syncLayout();
     }
     armReports();
@@ -258,7 +289,11 @@ export function startCameras() {
   control.addEventListener('click',openPanel);
   panel.querySelector('.eew-camera-close').addEventListener('click',collapse);
   auto.addEventListener('change',()=>{automatic=auto.checked;persist(automatic);if(!automatic)collapse();});
-  select.addEventListener('change',()=>{const camera=choices.find(item=>item.id===select.value);if(camera){failed.delete(camera.id);choose(camera);}});
+  mapToggle.addEventListener('change',()=>{
+    try{localStorage.setItem('eew-camera-map',String(mapToggle.checked));}catch{/* optional storage */}
+    cameraMap.setEnabled(mapToggle.checked);
+  });
+  select.addEventListener('change',()=>{const camera=choices.find(item=>item.id===select.value);if(camera){if(current?.kind==='camera')selectFromMap(camera.id);else{failed.delete(camera.id);choose(camera);}}});
   next.addEventListener('click',()=>{if(failed.size>=choices.length)failed.clear();nextCamera();});
   preview.addEventListener('click',()=>{
     if(latestNative&&!preview.disabled){adopt({...latestNative,manual:true});expanded=true;renderInfo();syncLayout();}
@@ -276,7 +311,7 @@ export function startCameras() {
   addEventListener('resize',resize);addEventListener('pagehide',pause);addEventListener('pageshow',resume);
   renderInfo();tick();
   return {stop(){
-    stopped=true;clearTimeout(timer);resetPlayer();observer.disconnect();
+    stopped=true;clearTimeout(timer);cameraMap.stop();resetPlayer();observer.disconnect();
     lifetime.clear();discardReports();community.cancel();document.removeEventListener('eew-community-report',receiveReport);
     logActivity.reset();publishLogActivity();
     document.removeEventListener('eew-community-log-activity-request',requestLogActivity);
