@@ -166,7 +166,7 @@ export function startCommunity() {
     statusNode.textContent = `${text}${state.latestAt ? ` · 最終投稿 ${clock.format(state.latestAt)}` : ''}`;
     host.dataset.connection = demo ? 'demo' : status.state;
     host.dataset.reportCount = String(state.total);
-    host.title = demo ? 'コミュニティ投稿のデモです' : `直近10分 ${number.format(state.total)}件 · ${text}`;
+    host.setAttribute('aria-description', demo ? 'コミュニティ投稿のデモです' : `直近10分 ${number.format(state.total)}件 · ${text}`);
     const fragment = document.createDocumentFragment();
     for (const area of [...state.areas].sort((a, b) => b.count - a.count || a.code - b.code)) {
       const row = document.createElement('div');
