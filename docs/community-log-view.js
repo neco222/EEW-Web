@@ -59,8 +59,9 @@ export function startCommunityLogView({detailsBody,active=false}) {
     for(const [key,row] of nodes)if(!retained.has(key)){row.remove();nodes.delete(key);}
     if(follow){rows.scrollTop=0;unseen=0;}
     else if(anchor?.parentNode===rows)rows.scrollTop=anchor.offsetTop-offset;
-    const texts={live:'受信中',shared:'受信中',history:'履歴取得中',connecting:'接続中',reconnecting:'再接続中',offline:'オフライン',error:'接続を確認中',stopped:'一時停止',demo:'デモ'};
-    status.textContent=texts[state.connection]||'接続中';status.title=state.message||'';
+    const texts={live:'受信中',shared:'受信中',polling:'履歴で補完中',history:'履歴取得中',connecting:'接続中',reconnecting:'再接続中',offline:'オフライン',error:'接続を確認中',stopped:'一時停止',demo:'デモ'};
+    const connection=state.connection==='shared'&&state.upstreamState&&state.upstreamState!=='live'?state.upstreamState:state.connection;
+    status.textContent=texts[connection]||'接続中';status.title=state.message||'';
     dock.dataset.connection=state.connection;dock.dataset.reportCount=String(state.entries.length);
     empty.hidden=state.entries.length>0;
     empty.textContent=state.demo?'デモ表示・実際の投稿ではありません':'直近10分の個別投稿はありません';

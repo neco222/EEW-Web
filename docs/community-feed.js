@@ -4,8 +4,20 @@ export const COMMUNITY_WEBSOCKET_URL = 'wss://api.p2pquake.net/v2/ws';
 const API_BASE = 'https://api.p2pquake.net/v2/history';
 const CHANNEL = 'eewgit-community-feed-v1';
 const REQUEST_TIMEOUT_MS = 10000;
+const HISTORY_RECONCILIATION_INTERVAL_MS = 30000;
+const REALTIME_DELIVERY_GRACE_MS = 5000;
+const REALTIME_RECOVERY_COOLDOWN_MS = 120000;
 const MAX_RECENT_MESSAGES = 1000;
 let nextClientId = 0;
+
+function normalizeWireMessage(message) {
+  // Production WS BSON records use _id; REST translates the same identifier
+  // to id. Keep the store's canonical contract and never override a non-null id.
+  // Only the observed Mongo ObjectId string representation is supported.
+  if ((message.code === 561 || message.code === 9611) && message.id == null &&
+      typeof message._id === 'string' && /^[\da-f]{24}$/i.test(message._id)) return { ...message, id: message._id };
+  return message;
+}
 
 function abortable(work, signal) {
   return new Promise((resolve, reject) => {
@@ -28,6 +40,9 @@ function abortable(work, signal) {
  * snapshot; transport failures are reported through onStatus, not rejections.
  * One refresh batch contains two requests (9611:30, 561:100). Concurrent calls
  * share its Promise and never replace an existing WebSocket.
+ * The network leader reconciles the same history batch every 30 seconds even
+ * with an open socket: OPEN alone cannot prove every report was delivered.
+ * API retry delays take priority. History reconciliation never emits onLive.
  * onLive(snapshot, { previous, message, receivedAt }) runs only for accepted
  * live 561/9611 messages, including live delivery from a leader tab. previous
  * is captured immediately before ingestion with expired reports pruned. History,
@@ -54,6 +69,7 @@ export class CommunityFeed {
   #setTimeout;
   #clearTimeout;
   #eventTarget;
+  #lifecycleTarget;
   #navigator;
   #locks;
   #BroadcastChannel;
@@ -62,6 +78,7 @@ export class CommunityFeed {
   #started = false;
   #running = false;
   #hidden = false;
+  #frozen = false;
   #online;
   #epoch = 0;
   #leader = false;
@@ -73,6 +90,7 @@ export class CommunityFeed {
   #connectTimer = null;
   #reconnectTimer = null;
   #historyRetryTimer = null;
+  #historyPollTimer = null;
   #historyTimeout = null;
   #historyAbort = null;
   #refreshPromise = null;
@@ -81,9 +99,22 @@ export class CommunityFeed {
   #opened = false;
   #historyError = null;
   #lastSync = null;
+  #socketOpenedAt = null;
+  #lastFrameAt = null;
+  #lastLiveAt = null;
+  #lastHistoryAt = null;
+  #wireReports = new Map();
+  #missingRealtime = new Map();
+  #lastRealtimeRecoveryAt = null;
+  #realtimeRecoveryCount = 0;
+  #liveAcceptedCount = 0;
+  #liveDuplicateCount = 0;
+  #liveRejectedCount = 0;
+  #lastRejectedReason = null;
   #status = null;
   #recent = new Map();
   #handlers;
+  #lifecycleHandlers;
 
   constructor(options = {}) {
     const { store, onChange = () => {}, onStatus = () => {}, onLive = () => {}, onHistory = () => {} } = options;
@@ -102,6 +133,7 @@ export class CommunityFeed {
     this.#setTimeout = options.setTimeout ?? globalThis.setTimeout.bind(globalThis);
     this.#clearTimeout = options.clearTimeout ?? globalThis.clearTimeout.bind(globalThis);
     this.#eventTarget = options.eventTarget ?? globalThis.window;
+    this.#lifecycleTarget = options.lifecycleTarget ?? globalThis.document;
     const nav = options.navigator ?? globalThis.navigator;
     this.#navigator = nav;
     this.#online = nav?.onLine !== false;
@@ -115,6 +147,19 @@ export class CommunityFeed {
       pagehide: () => { this.#hidden = true; if (this.#started) { this.#deactivate(); this.#emit('stopped', 'ページを一時停止しています。'); } },
       pageshow: () => { this.#hidden = false; this.#online = this.#navigator?.onLine !== false; this.#activate(); },
     };
+    this.#lifecycleHandlers = {
+      // Hidden tabs keep receiving. A browser freeze is different: release the
+      // lock/socket so another runnable tab can take over without two sockets.
+      freeze: () => {
+        this.#frozen = true;
+        if (this.#started) { this.#deactivate(); this.#emit('stopped', 'ページを一時停止しています。'); }
+      },
+      resume: () => {
+        this.#frozen = false;
+        this.#online = this.#navigator?.onLine !== false;
+        this.#activate();
+      },
+    };
   }
 
   start() {
@@ -122,6 +167,7 @@ export class CommunityFeed {
     this.#started = true;
     this.#online = this.#navigator?.onLine !== false;
     for (const [event, handler] of Object.entries(this.#handlers)) this.#eventTarget?.addEventListener(event, handler);
+    for (const [event, handler] of Object.entries(this.#lifecycleHandlers)) this.#lifecycleTarget?.addEventListener(event, handler);
     this.#change();
     this.#activate();
     return this;
@@ -131,6 +177,7 @@ export class CommunityFeed {
     if (!this.#started) return this;
     this.#started = false;
     for (const [event, handler] of Object.entries(this.#handlers)) this.#eventTarget?.removeEventListener(event, handler);
+    for (const [event, handler] of Object.entries(this.#lifecycleHandlers)) this.#lifecycleTarget?.removeEventListener(event, handler);
     this.#deactivate();
     this.#emit('stopped', '接続を停止しました。');
     return this;
@@ -149,7 +196,7 @@ export class CommunityFeed {
   #current(epoch) { return this.#started && this.#running && epoch === this.#epoch; }
 
   #activate() {
-    if (!this.#started || this.#running || this.#hidden) return;
+    if (!this.#started || this.#running || this.#hidden || this.#frozen) return;
     if (!this.#online) { this.#emit('offline', 'オフラインです。接続の復帰を待っています。'); return; }
     this.#running = true;
     const epoch = ++this.#epoch;
@@ -198,6 +245,7 @@ export class CommunityFeed {
     this.#epoch++;
     this.#clearTimer('reconnect');
     this.#clearTimer('historyRetry');
+    this.#clearTimer('historyPoll');
     this.#clearTimer('historyTimeout');
     this.#historyAbort?.abort();
     this.#historyAbort = null;
@@ -224,6 +272,7 @@ export class CommunityFeed {
       connect: [() => this.#connectTimer, (value) => { this.#connectTimer = value; }],
       reconnect: [() => this.#reconnectTimer, (value) => { this.#reconnectTimer = value; }],
       historyRetry: [() => this.#historyRetryTimer, (value) => { this.#historyRetryTimer = value; }],
+      historyPoll: [() => this.#historyPollTimer, (value) => { this.#historyPollTimer = value; }],
       historyTimeout: [() => this.#historyTimeout, (value) => { this.#historyTimeout = value; }],
     }[name];
     if (field[0]() !== null) this.#clearTimeout(field[0]());
@@ -234,6 +283,9 @@ export class CommunityFeed {
     this.#clearTimer('connect');
     const socket = this.#socket;
     this.#socket = null;
+    this.#socketOpenedAt = null;
+    this.#wireReports.clear();
+    this.#missingRealtime.clear();
     if (!socket) return;
     socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
     if (socket.readyState === 0 || socket.readyState === 1) { try { socket.close(); } catch { /* already closing */ } }
@@ -252,25 +304,32 @@ export class CommunityFeed {
     socket.onopen = () => {
       if (!valid()) return;
       this.#clearTimer('connect');
+      const reconnect = this.#opened || this.#retryAttempt > 0;
       this.#retryAttempt = 0;
-      const reconnect = this.#opened;
       this.#opened = true;
+      this.#socketOpenedAt = this.#now();
+      this.#wireReports.clear();
+      this.#missingRealtime.clear();
       this.#operationalStatus();
-      if (reconnect) this.#requestHistory(epoch);
+      if (reconnect && this.#historyRetryTimer === null) this.#requestHistory(epoch);
     };
     socket.onmessage = (event) => {
       if (!valid()) return;
+      this.#lastFrameAt = this.#now();
       let message;
       try { message = JSON.parse(event.data); }
-      catch { this.#emit('error', '受信データを読み取れませんでした。次の更新を待っています。'); return; }
+      catch { this.#rejectLive('invalid-json'); this.#emit('error', '受信データを読み取れませんでした。次の更新を待っています。'); return; }
       if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        this.#rejectLive('invalid-message');
         this.#emit('error', '受信データの形式が正しくありません。'); return;
       }
       if (message.code !== 561 && message.code !== 9611) {
         if (Number.isInteger(message.code)) this.#operationalStatus();
         return;
       }
+      message = normalizeWireMessage(message);
       const receivedAt = this.#now();
+      this.#rememberWireReport(message);
       this.#ingestLive(message, receivedAt);
       this.#remember([message]);
       this.#lastSync = this.#now();
@@ -300,6 +359,19 @@ export class CommunityFeed {
       this.#reconnectTimer = null;
       this.#connect(epoch);
     }, delay);
+    this.#scheduleHistoryPoll(epoch);
+  }
+
+  #scheduleHistoryPoll(epoch) {
+    if (!this.#current(epoch) || !this.#leader ||
+        this.#refreshPromise || this.#historyRetryTimer !== null || this.#historyPollTimer !== null) return;
+    // A rejected handshake or an apparently open but incomplete socket can
+    // persist while REST remains usable. Only the leader repairs the history.
+    // An API failure's existing Retry-After/backoff always owns the next request.
+    this.#historyPollTimer = this.#setTimeout(() => {
+      this.#historyPollTimer = null;
+      this.#requestHistory(epoch);
+    }, HISTORY_RECONCILIATION_INTERVAL_MS);
   }
 
   async #fetchHistory(code, limit, signal) {
@@ -325,8 +397,12 @@ export class CommunityFeed {
   #requestHistory(epoch) {
     if (!this.#current(epoch) || !this.#leader) return Promise.resolve(this.#store.snapshot());
     if (this.#refreshPromise) return this.#refreshPromise;
+    if (this.#historyRetryTimer !== null) return Promise.resolve(this.#store.snapshot());
     this.#clearTimer('historyRetry');
+    this.#clearTimer('historyPoll');
     const controller = new this.#AbortController();
+    const historySocket = this.#socket;
+    const historyOpenedAt = this.#socketOpenedAt;
     this.#historyAbort = controller;
     let timedOut = false;
     this.#historyTimeout = this.#setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
@@ -347,6 +423,7 @@ export class CommunityFeed {
       this.#change();
       const failures = results.filter((entry) => entry.status === 'rejected');
       if (failures.length) {
+        this.#missingRealtime.clear();
         const delay = Math.max(this.#backoff(this.#historyAttempt++), ...failures.map((entry) => entry.reason?.retryAfterMs || 0));
         this.#historyError = timedOut ? '履歴の取得がタイムアウトしました。' : failures[0].reason?.message || '履歴の取得に失敗しました。';
         this.#emit('error', `${this.#historyError} 自動で再試行します。`, { retryInMs: delay, nextRetryAt: this.#now() + delay });
@@ -358,13 +435,15 @@ export class CommunityFeed {
         this.#historyError = null;
         this.#historyAttempt = 0;
         this.#lastSync = this.#now();
-        this.#operationalStatus();
+        this.#lastHistoryAt = this.#now();
+        if (!this.#recoverMissingRealtime(messages, historySocket, historyOpenedAt, epoch)) this.#operationalStatus();
       }
       return this.#store.snapshot();
     }).finally(() => {
       if (this.#refreshPromise === pending) {
         this.#refreshPromise = null;
         this.#historyAbort = null;
+        this.#scheduleHistoryPoll(epoch);
       }
     });
     this.#refreshPromise = pending;
@@ -397,6 +476,55 @@ export class CommunityFeed {
     }
   }
 
+  #reportIdentity(message) {
+    if (message?.code !== 561 || typeof message.id !== 'string' || !message.id.length || message.id.length > 256) return null;
+    const area = message.area;
+    if (!(typeof area === 'number' || typeof area === 'string' && /^\d{1,3}$/.test(area)) ||
+        !Number.isInteger(Number(area)) || Number(area) < 0 || Number(area) > 999) return null;
+    const at = parseP2PTime(message.time);
+    if (at === null || at <= this.#now() - 600000 || at > this.#now() + REALTIME_DELIVERY_GRACE_MS) return null;
+    const keys = [`id:${message.id}`];
+    if (typeof message.uid === 'string' && message.uid.length && message.uid.length <= 256) keys.push(`uid:${message.uid}`);
+    return { at, keys };
+  }
+
+  #rememberWireReport(message) {
+    const report = this.#reportIdentity(message);
+    if (!report) return;
+    for (const key of report.keys) this.#wireReports.set(key, report.at);
+    for (const [key, at] of this.#wireReports) if (at <= this.#now() - 600000) this.#wireReports.delete(key);
+    while (this.#wireReports.size > MAX_RECENT_MESSAGES * 2) this.#wireReports.delete(this.#wireReports.keys().next().value);
+  }
+
+  #recoverMissingRealtime(messages, socket, openedAt, epoch) {
+    // A quiet OPEN socket is normal. Only the same valid post-open report,
+    // absent on the wire in two full history batches, can justify recovery.
+    // Require one reconciliation interval between batches even on manual refresh.
+    if (!socket || socket !== this.#socket || socket.readyState !== 1 || openedAt === null || openedAt !== this.#socketOpenedAt) {
+      this.#missingRealtime.clear();
+      return false;
+    }
+    const now = this.#now();
+    const next = new Map();
+    for (const message of messages) {
+      const report = this.#reportIdentity(message);
+      if (!report || report.at <= openedAt + REALTIME_DELIVERY_GRACE_MS || report.at > now - REALTIME_DELIVERY_GRACE_MS ||
+          report.keys.some((key) => this.#wireReports.has(key))) continue;
+      const key = report.keys.at(-1);
+      const previous = this.#missingRealtime.get(key);
+      next.set(key, previous ?? now);
+      if (next.size >= MAX_RECENT_MESSAGES) break;
+    }
+    const confirmed = [...next].filter(([, firstSeen]) => now - firstSeen >= HISTORY_RECONCILIATION_INTERVAL_MS).length;
+    this.#missingRealtime = next;
+    if (!confirmed || this.#lastRealtimeRecoveryAt !== null && now - this.#lastRealtimeRecoveryAt < REALTIME_RECOVERY_COOLDOWN_MS) return false;
+    this.#lastRealtimeRecoveryAt = now;
+    this.#realtimeRecoveryCount++;
+    this.#closeSocket();
+    this.#scheduleReconnect(epoch, '履歴との照合で未受信の投稿を確認したため、接続を更新します。');
+    return true;
+  }
+
   #post(message) {
     if (!this.#channel) return;
     try { this.#channel.postMessage({ protocol: CHANNEL, from: this.#id, ...message }); } catch { /* tab is closing */ }
@@ -422,7 +550,16 @@ export class CommunityFeed {
     const status = message.type === 'status' ? message.status : message.type === 'replay' ? message.status : null;
     if (status && typeof status.state === 'string') {
       this.#lastSync = status.lastSync ?? this.#lastSync;
-      const state = ['error', 'offline', 'stopped'].includes(status.state) ? status.state : 'shared';
+      this.#socketOpenedAt = status.openedAt ?? null;
+      this.#lastFrameAt = status.lastFrameAt ?? this.#lastFrameAt;
+      this.#lastLiveAt = status.lastLiveAt ?? this.#lastLiveAt;
+      this.#lastHistoryAt = status.lastHistoryAt ?? this.#lastHistoryAt;
+      this.#realtimeRecoveryCount = status.realtimeRecoveryCount ?? this.#realtimeRecoveryCount;
+      this.#liveAcceptedCount = status.liveAcceptedCount ?? this.#liveAcceptedCount;
+      this.#liveDuplicateCount = status.liveDuplicateCount ?? this.#liveDuplicateCount;
+      this.#liveRejectedCount = status.liveRejectedCount ?? this.#liveRejectedCount;
+      this.#lastRejectedReason = status.lastRejectedReason ?? this.#lastRejectedReason;
+      const state = ['error', 'offline', 'stopped', 'connecting', 'reconnecting', 'history', 'polling'].includes(status.state) ? status.state : 'shared';
       this.#emit(state, state === 'shared' ? '他のタブとコミュニティ投稿の接続を共有しています。' : status.message,
         { upstreamState: status.state, retryInMs: status.retryInMs, nextRetryAt: status.nextRetryAt });
     }
@@ -431,12 +568,17 @@ export class CommunityFeed {
   #operationalStatus() {
     if (this.#historyError) this.#emit('error', `${this.#historyError} 自動で再試行します。`);
     else if (this.#socket?.readyState === 1) this.#emit('live', 'リアルタイム接続中です。');
+    else if (this.#lastSync !== null) this.#emit('polling', 'リアルタイム接続を待ちながら、30秒ごとに履歴で補完しています。');
     else this.#emit(this.#reconnectTimer !== null ? 'reconnecting' : 'connecting', 'リアルタイム接続を待っています。');
   }
 
   #emit(state, message, extra = {}) {
     this.#status = { state, message, lastSync: this.#lastSync, shared: this.#sharing,
-      role: this.#sharing ? this.#leader ? 'leader' : 'follower' : 'direct', ...extra };
+      role: this.#sharing ? this.#leader ? 'leader' : 'follower' : 'direct',
+      openedAt: this.#socketOpenedAt, lastFrameAt: this.#lastFrameAt, lastLiveAt: this.#lastLiveAt,
+      lastHistoryAt: this.#lastHistoryAt, realtimeRecoveryCount: this.#realtimeRecoveryCount,
+      liveAcceptedCount: this.#liveAcceptedCount, liveDuplicateCount: this.#liveDuplicateCount,
+      liveRejectedCount: this.#liveRejectedCount, lastRejectedReason: this.#lastRejectedReason, ...extra };
     try { this.#onStatus({ ...this.#status }); } catch { /* UI errors must not duplicate the transport */ }
     if (this.#leader) this.#post({ type: 'status', status: this.#status });
   }
@@ -452,9 +594,21 @@ export class CommunityFeed {
   #ingestLive(message, receivedAt) {
     if (!message || message.code !== 561 && message.code !== 9611) return;
     const previous = this.#store.snapshot();
-    const accepted = this.#store.ingest(message).accepted;
-    if (!accepted) return;
+    const result = this.#store.ingest(message);
+    if (!result.accepted) {
+      if (result.reason === 'duplicate') this.#liveDuplicateCount++;
+      else this.#rejectLive(result.reason);
+      return;
+    }
+    this.#lastLiveAt = receivedAt;
+    this.#liveAcceptedCount++;
     const snapshot = this.#store.snapshot();
     try { this.#onLive(snapshot, { previous, message, receivedAt }); } catch { /* UI effects must not interrupt the feed */ }
+  }
+
+  #rejectLive(reason) {
+    this.#liveRejectedCount++;
+    // Only fixed reason codes are exposed, never a raw frame or identifiers.
+    this.#lastRejectedReason = ['invalid-json', 'invalid-message', 'invalid-area', 'invalid-evaluation', 'future-time', 'expired'].includes(reason) ? reason : 'invalid-message';
   }
 }

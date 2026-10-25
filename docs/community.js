@@ -115,7 +115,7 @@ export function startCommunity() {
   function publishLog(force = false) {
     if (disposed) return;
     const snapshot = log.snapshot();
-    const detail = {entries:snapshot.entries, connection:demo?'demo':status.state,
+    const detail = {entries:snapshot.entries, connection:demo?'demo':status.state, upstreamState:status.upstreamState??null,
       message:demo?'デモ表示・実際の投稿ではありません':label(status.message), demo};
     const key = JSON.stringify(detail);
     if (!force && key === lastLog) return;
@@ -135,6 +135,7 @@ export function startCommunity() {
   document.dispatchEvent(new Event('eew-community-log-activity-request'));
 
   function relayout() {
+    if (disposed) return;
     // Packager resizes its canvas synchronously; Scratch's map/layout lists
     // catch up on subsequent VM frames. Never combine those two geometries.
     clearVisuals();
@@ -157,6 +158,12 @@ export function startCommunity() {
   }
 
   function updatePanel() {
+    // Read-only transport diagnostics remain current even when visible content
+    // is unchanged. Do not put frames, report identifiers, or debug text in UI.
+    for (const key of ['openedAt', 'lastFrameAt', 'lastLiveAt', 'lastHistoryAt', 'realtimeRecoveryCount', 'liveRejectedCount']) {
+      host.dataset[key] = status[key] == null ? '' : String(status[key]);
+    }
+    host.dataset.lastRejectedReason = status.lastRejectedReason ?? '';
     const content = JSON.stringify([state.total, state.areas.map((area) => [area.code, area.count]), state.unlocatedCount,
       state.latestAt, state.quality.notes, status.state, status.message]);
     if (content === lastPanel) return;

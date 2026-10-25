@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CommunityStore } from '../docs/community-core.js';
+import { CommunityLog } from '../docs/community-log.js';
 import { CommunityFeed, COMMUNITY_WEBSOCKET_URL } from '../docs/community-feed.js';
 import { startCommunityMapFollow } from '../docs/community-map.js';
 
 const BASE = Date.parse('2026-10-20T12:00:00+09:00');
 const TIME = '2026/10/20 12:00:00.000';
 const report = (id = 'report', area = 250) => ({ code: 561, id, area, time: TIME });
+const reportAt = (id, at, uid) => ({ code: 561, id, area: 250, time: new Date(at).toISOString(), ...(uid ? { uid } : {}) });
 const evaluation = { code: 9611, id: 'evaluation', started_at: TIME, updated_at: TIME,
   time: TIME, count: 1, confidence: 0, area_confidences: {} };
 async function flush() { for (let i = 0; i < 35; i++) await Promise.resolve(); }
@@ -199,6 +201,199 @@ test('onLive receives exact before/after snapshots only for accepted live report
   h.feed.stop();
 });
 
+test('live 561 dispatches change and live callbacks in the socket call without waiting for reconciliation or timers', async () => {
+  const h = harness();
+  h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  const timers = [...h.clock.timers.keys()];
+  const at = h.clock.time;
+  socket.message(reportAt('immediate', at));
+  assert.equal(h.live.length, 1);
+  assert.equal(h.changes.at(-1).total, 1);
+  assert.equal(h.live[0].receivedAt, at);
+  assert.deepEqual([...h.clock.timers.keys()], timers);
+  assert.equal(h.statuses.at(-1).lastFrameAt, at);
+  assert.equal(h.statuses.at(-1).lastLiveAt, at);
+  assert.equal(h.statuses.at(-1).openedAt, at);
+  assert.equal(h.statuses.at(-1).liveAcceptedCount, 1);
+  h.feed.stop();
+});
+
+test('production WS _id records normalize before immediate ingestion and deduplicate against canonical REST id for 561 and 9611', async () => {
+  let records = [];
+  const h = harness({ fetch: url => Promise.resolve(response(records.filter(message => url.includes(`codes=${message.code}`)))) });
+  h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  const canonical = reportAt('6add9bfbc58757000704d541', h.clock.time);
+  const wire = { ...canonical, _id: canonical.id }; delete wire.id;
+  socket.message(wire);
+  assert.equal(h.changes.at(-1).total, 1); assert.equal(h.live.length, 1);
+  assert.equal(h.live[0].message.id, canonical.id); assert.equal(Object.hasOwn(wire, 'id'), false);
+  records = [canonical]; await h.feed.refresh(); socket.message(wire);
+  assert.equal(h.live.length, 1); assert.equal(h.store.snapshot().total, 1);
+  const canonicalEvaluation = { ...evaluation, id: '6add9c02c58757000704d542' };
+  const wireEvaluation = { ...canonicalEvaluation, id: null, _id: canonicalEvaluation.id };
+  socket.message(wireEvaluation);
+  assert.equal(h.live.length, 2); assert.equal(h.live.at(-1).message.id, canonicalEvaluation.id);
+  assert.equal(wireEvaluation.id, null);
+  records = [canonical, canonicalEvaluation]; await h.feed.refresh(); socket.message(wireEvaluation);
+  assert.equal(h.live.length, 2); assert.equal(h.statuses.at(-1).liveRejectedCount, 0);
+  h.feed.stop();
+});
+
+test('wire normalization preserves any non-null id and rejects unsupported _id values instead of inventing identifiers', async () => {
+  const h = harness(); h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  const value = reportAt('canonical-wins', h.clock.time);
+  socket.message({ ...value, _id: '6add9bfbc58757000704d541' });
+  assert.equal(h.live.at(-1).message.id, 'canonical-wins');
+  for (const message of [
+    { ...value, id: '', _id: '6add9bfbc58757000704d541' },
+    { ...value, id: 42, _id: '6add9bfbc58757000704d541' },
+    { ...value, id: null, _id: 'not-an-object-id' },
+    { ...value, id: null, _id: { $oid: '6add9bfbc58757000704d541' } },
+  ]) socket.message(message);
+  assert.equal(h.live.length, 1); assert.equal(h.statuses.at(-1).liveRejectedCount, 4);
+  assert.equal(h.statuses.at(-1).lastRejectedReason, 'invalid-message');
+  h.feed.stop();
+});
+
+test('quiet or hidden OPEN sockets remain connected indefinitely; unrelated frames update diagnostics only', async () => {
+  const doc = new EventTarget(); doc.hidden = false;
+  const h = harness({ options: { lifecycleTarget: doc } });
+  h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  doc.hidden = true; doc.dispatchEvent(new Event('visibilitychange'));
+  await h.clock.advance(12 * 60000);
+  socket.message({ code: 555 });
+  assert.equal(h.WebSocket.instances.length, 1);
+  assert.equal(socket.closeCalls, 0);
+  assert.equal(h.statuses.at(-1).state, 'live');
+  assert.equal(h.statuses.at(-1).lastFrameAt, h.clock.time);
+  assert.equal(h.statuses.at(-1).lastLiveAt, null);
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 0);
+  h.feed.stop(); assert.equal(h.clock.timers.size, 0);
+});
+
+test('the same missing post-open report in two separate successful batches closes first and reconnects with backoff silently', async () => {
+  let records = [];
+  const h = harness({ fetch: url => Promise.resolve(response(url.includes('codes=561') ? records : [])) });
+  h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  records = [reportAt('missed-wire', h.clock.time + 10000, 'protocol-uid')];
+  await h.clock.advance(30000);
+  assert.equal(h.store.snapshot().total, 1);
+  assert.equal(socket.closeCalls, 0);
+  await h.feed.refresh(); // Another request at the same time is not corroboration.
+  assert.equal(socket.closeCalls, 0);
+  await h.clock.advance(30000);
+  assert.equal(socket.closeCalls, 1);
+  assert.equal(h.WebSocket.instances.length, 1);
+  assert.equal(h.statuses.at(-1).state, 'reconnecting');
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 1);
+  assert.equal(h.live.length, 0);
+  assert.equal(h.statuses.at(-1).lastHistoryAt, h.clock.time);
+  await h.clock.advance(999); assert.equal(h.WebSocket.instances.length, 1);
+  await h.clock.advance(1); assert.equal(h.WebSocket.instances.length, 2);
+  h.WebSocket.instances[1].open(); await flush();
+  assert.equal(h.statuses.at(-1).state, 'live');
+  assert.equal(h.live.length, 0);
+  h.feed.stop(); assert.equal(h.clock.timers.size, 0);
+});
+
+test('pre-open, initial grace, expired, future, invalid and unrelated history cannot trigger socket recovery', async () => {
+  let openedAt;
+  const h = harness({ fetch: url => Promise.resolve(response(url.includes('codes=561') && openedAt ? [
+    reportAt('before-open', openedAt - 1), reportAt('initial-race', openedAt + 5000),
+    reportAt('expired', h.clock.time - 600001), reportAt('future', h.clock.time + 60000),
+    { ...reportAt('invalid-area', openedAt + 10000), area: null },
+    { ...reportAt('invalid-id', openedAt + 10000), id: null },
+  ] : [])) });
+  h.feed.start(); await flush(); h.WebSocket.instances[0].open(); openedAt = h.clock.time;
+  await h.clock.advance(180000);
+  assert.equal(h.WebSocket.instances.length, 1);
+  assert.equal(h.WebSocket.instances[0].closeCalls, 0);
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 0);
+  h.feed.stop();
+});
+
+test('a valid wire id or uid arriving after silent backfill cancels missing-realtime suspicion despite store dedup', async t => {
+  for (const alias of ['id', 'uid']) await t.test(alias, async () => {
+    let records = [];
+    const h = harness({ fetch: url => Promise.resolve(response(url.includes('codes=561') ? records : [])) });
+    h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+    const message = reportAt('canonical', h.clock.time + 10000, 'wire-uid'); records = [message];
+    await h.clock.advance(30000);
+    socket.message(alias === 'uid' ? { ...message, id: 'wire-alias' } : message);
+    assert.equal(h.statuses.at(-1).liveDuplicateCount, 1);
+    assert.equal(h.statuses.at(-1).liveRejectedCount, 0);
+    assert.equal(h.live.length, 0);
+    await h.clock.advance(90000);
+    assert.equal(socket.closeCalls, 0);
+    assert.equal(h.WebSocket.instances.length, 1);
+    h.feed.stop();
+  });
+});
+
+test('a partial history failure resets corroboration and respects Retry-After before recovery', async () => {
+  let records = [], fail = false;
+  const h = harness({ fetch: url => Promise.resolve(url.includes('codes=9611') && fail ?
+    response([], { status: 429, retryAfter: '5' }) : response(url.includes('codes=561') ? records : [])) });
+  h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  records = [reportAt('missing', h.clock.time + 10000)];
+  await h.clock.advance(30000); fail = true;
+  await h.clock.advance(30000); assert.equal(socket.closeCalls, 0);
+  fail = false; await h.clock.advance(5000); assert.equal(socket.closeCalls, 0);
+  await h.clock.advance(29999); assert.equal(socket.closeCalls, 0);
+  await h.clock.advance(1); assert.equal(socket.closeCalls, 1);
+  assert.equal(h.live.length, 0);
+  h.feed.stop();
+});
+
+test('successive missing reports cannot cause more than one recovery per two minutes', async () => {
+  let records = [];
+  const h = harness({ fetch: url => Promise.resolve(response(url.includes('codes=561') ? records : [])) });
+  h.feed.start(); await flush(); h.WebSocket.instances[0].open();
+  records = [reportAt('first-gap', h.clock.time + 10000)];
+  await h.clock.advance(60000);
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 1);
+  await h.clock.advance(1000); const second = h.WebSocket.instances[1]; second.open(); await flush();
+  records = [reportAt('new-gap', h.clock.time + 10000)];
+  await h.clock.advance(90000);
+  assert.equal(second.closeCalls, 0);
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 1);
+  await h.clock.advance(30000);
+  assert.equal(second.closeCalls, 1);
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 2);
+  assert.equal(h.live.length, 0);
+  h.feed.stop();
+});
+
+test('a close/reopen discards the previous socket missing-report evidence', async () => {
+  let records = [];
+  const h = harness({ fetch: url => Promise.resolve(response(url.includes('codes=561') ? records : [])) });
+  h.feed.start(); await flush(); const first = h.WebSocket.instances[0]; first.open();
+  records = [reportAt('previous-session', h.clock.time + 10000)];
+  await h.clock.advance(30000);
+  first.disconnect(); await h.clock.advance(1000); h.WebSocket.instances[1].open(); await flush();
+  await h.clock.advance(90000);
+  assert.equal(h.WebSocket.instances.length, 2);
+  assert.equal(h.WebSocket.instances[1].closeCalls, 0);
+  assert.equal(h.statuses.at(-1).realtimeRecoveryCount, 0);
+  h.feed.stop();
+});
+
+test('wire diagnostics distinguish malformed records and duplicates without exposing raw content', async () => {
+  const h = harness(); h.feed.start(); await flush(); const socket = h.WebSocket.instances[0]; socket.open();
+  socket.message('{secret');
+  socket.message({ ...reportAt('private-id', h.clock.time), id: null, _id: 'private-diagnostic-value' });
+  socket.message({ ...reportAt('bad-area', h.clock.time), area: null });
+  socket.message(reportAt('valid', h.clock.time)); socket.message(reportAt('valid', h.clock.time));
+  const status = h.statuses.at(-1);
+  assert.equal(status.liveRejectedCount, 3);
+  assert.equal(status.lastRejectedReason, 'invalid-area');
+  assert.equal(status.liveDuplicateCount, 1);
+  assert.equal(status.liveAcceptedCount, 1);
+  assert.equal(JSON.stringify(status).includes('private'), false);
+  assert.equal(JSON.stringify(status).includes('secret'), false);
+  h.feed.stop();
+});
+
 test('onLive previous prunes expired reports instead of using the last rendered net total', async () => {
   const clock = new Clock();
   clock.time = BASE + 600000 - 1;
@@ -253,17 +448,148 @@ test('socket errors reconnect with exponential backoff capped at 30 seconds, and
     assert.equal(h.WebSocket.instances.length, count + 1);
   }
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000]);
+  const requestsAfterPolling = h.calls.length;
   h.WebSocket.instances.at(-1).open();
+  await flush();
+  assert.equal(h.calls.length, requestsAfterPolling + 2);
   h.WebSocket.instances.at(-1).disconnect();
   assert.equal(h.statuses.at(-1).retryInMs, 1000);
   await h.clock.advance(1000);
   h.WebSocket.instances.at(-1).open();
   await flush();
-  assert.equal(h.calls.length, 4);
+  assert.equal(h.calls.length, requestsAfterPolling + 4);
   h.feed.stop();
   const count = h.WebSocket.instances.length;
   await h.clock.advance(60000);
   assert.equal(h.WebSocket.instances.length, count);
+});
+
+test('disconnected WebSockets refresh REST history every 30 seconds without live effects or retry postponement', async () => {
+  let reportFetches = 0;
+  const h = harness({ fetch: (url) => Promise.resolve(response(url.includes('codes=561') ?
+    [report(`history-${++reportFetches}`)] : [])) });
+  h.feed.start(); await flush();
+  h.WebSocket.instances[0].error();
+  assert.equal(h.calls.length, 2);
+  await h.clock.advance(29999);
+  assert.equal(h.calls.length, 2);
+  await h.clock.advance(1);
+  assert.equal(h.calls.length, 4);
+  assert.equal(h.store.snapshot().total, 2);
+  assert.equal(h.history.flat().length, 2);
+  assert.equal(h.live.length, 0);
+  assert.equal(h.statuses.at(-1).state, 'polling');
+  assert.match(h.statuses.at(-1).message, /30秒ごとに履歴で補完/);
+  await h.clock.advance(30000);
+  assert.equal(h.calls.length, 6);
+  assert.equal(h.store.snapshot().total, 3);
+  assert.equal(h.live.length, 0);
+  h.WebSocket.instances.at(-1).open(); await flush();
+  h.WebSocket.instances.at(-1).message(report('history-2'));
+  assert.equal(h.live.length, 0); // A polled report cannot later become a new WS post.
+  h.feed.stop();
+  assert.equal(h.clock.timers.size, 0);
+});
+
+test('an open WebSocket continues bounded reconciliation after recovery repairs the gap', async () => {
+  const h = harness();
+  h.feed.start(); await flush();
+  h.WebSocket.instances[0].error();
+  await h.clock.advance(30000);
+  assert.equal(h.calls.length, 4);
+  h.WebSocket.instances.at(-1).open();
+  await flush();
+  assert.equal(h.calls.length, 6);
+  assert.equal(h.statuses.at(-1).state, 'live');
+  await h.clock.advance(90000);
+  assert.equal(h.calls.length, 12);
+  assert.equal(h.clock.timers.size, 1);
+  assert.equal(h.WebSocket.instances.at(-1).readyState, 1);
+  h.feed.stop();
+  assert.equal(h.clock.timers.size, 0);
+});
+
+test('disconnected REST polling preserves Retry-After delays beyond its 30 second interval', async () => {
+  let requests = 0;
+  const h = harness({ fetch: () => Promise.resolve(++requests > 2 && requests <= 4 ?
+    response([], { status: 429, retryAfter: '120' }) : response()) });
+  h.feed.start(); await flush();
+  h.WebSocket.instances[0].error();
+  await h.clock.advance(30000);
+  assert.equal(h.calls.length, 4);
+  await h.clock.advance(119999);
+  assert.equal(h.calls.length, 4);
+  await h.clock.advance(1);
+  assert.equal(h.calls.length, 6);
+  await h.clock.advance(29999);
+  assert.equal(h.calls.length, 6);
+  await h.clock.advance(1);
+  assert.equal(h.calls.length, 8);
+  h.feed.stop();
+});
+
+test('WebSocket recovery preserves REST Retry-After before resuming periodic reconciliation', async () => {
+  let requests = 0;
+  const h = harness({ fetch: () => Promise.resolve(++requests <= 2 ?
+    response([], { status: 429, retryAfter: '120' }) : response()) });
+  h.feed.start(); await flush();
+  h.WebSocket.instances[0].error();
+  await h.clock.advance(1000);
+  h.WebSocket.instances.at(-1).open(); await flush();
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.statuses.at(-1).state, 'error');
+  await h.clock.advance(118999);
+  assert.equal(h.calls.length, 2);
+  await h.clock.advance(1);
+  assert.equal(h.calls.length, 4);
+  assert.equal(h.statuses.at(-1).state, 'live');
+  await h.clock.advance(60000);
+  assert.equal(h.calls.length, 8);
+  h.feed.stop();
+  assert.equal(h.clock.timers.size, 0);
+});
+
+test('a pending disconnected poll shares the manual refresh batch and schedules again only after completion', async () => {
+  const pending = [];
+  let requests = 0;
+  const h = harness({ fetch: () => {
+    if (++requests <= 2) return Promise.resolve(response());
+    const item = deferred(); pending.push(item); return item.promise;
+  } });
+  h.feed.start(); await flush();
+  h.WebSocket.instances[0].error();
+  await h.clock.advance(30000);
+  const batch = h.feed.refresh();
+  assert.equal(h.feed.refresh(), batch);
+  await h.clock.advance(9999);
+  assert.equal(h.calls.length, 4);
+  pending[0].resolve(response()); pending[1].resolve(response([report('polled')]));
+  await batch;
+  assert.equal(h.store.snapshot().total, 1);
+  assert.equal(h.live.length, 0);
+  await h.clock.advance(29999);
+  assert.equal(h.calls.length, 4);
+  await h.clock.advance(1);
+  assert.equal(h.calls.length, 6);
+  h.feed.stop(); await flush();
+  assert.equal(h.clock.timers.size, 0);
+});
+
+test('offline and pagehide cancel disconnected polling until the matching resume event', async () => {
+  for (const [pause, resume] of [['offline', 'online'], ['pagehide', 'pageshow']]) {
+    const h = harness();
+    h.feed.start(); await flush(); h.WebSocket.instances[0].error();
+    h.eventTarget.dispatchEvent(new Event(pause));
+    assert.equal(h.clock.timers.size, 0);
+    await h.clock.advance(60000);
+    assert.equal(h.calls.length, 2);
+    h.eventTarget.dispatchEvent(new Event(resume)); await flush();
+    assert.equal(h.calls.length, 4);
+    await h.clock.advance(30000);
+    assert.equal(h.calls.length, 6);
+    h.feed.stop();
+    assert.equal(h.clock.timers.size, 0);
+  }
 });
 
 test('connecting timeout closes the stalled socket once and schedules one retry', async () => {
@@ -421,6 +747,45 @@ function channelFactory() {
     close() { channels.delete(this); this.onmessage = null; }
   };
 }
+
+test('document freeze releases the leader socket and lock; resume rejoins without creating a second connection', async () => {
+  const clock = new Clock(), locks = new FakeLocks(), BroadcastChannel = channelFactory(), WebSocket = socketFactory();
+  const aDocument = new EventTarget(), bDocument = new EventTarget();
+  const a = harness({ clock, WebSocket, options: { locks, BroadcastChannel, lifecycleTarget: aDocument } });
+  const b = harness({ clock, WebSocket, options: { locks, BroadcastChannel, lifecycleTarget: bDocument } });
+  a.feed.start(); await flush(); const first = WebSocket.instances[0]; first.open();
+  b.feed.start(); await flush(); assert.equal(WebSocket.instances.length, 1);
+  aDocument.dispatchEvent(new Event('freeze')); await flush();
+  assert.equal(first.closeCalls, 1);
+  assert.equal(WebSocket.instances.length, 2);
+  WebSocket.instances[1].open();
+  assert.equal(a.statuses.at(-1).state, 'stopped');
+  aDocument.dispatchEvent(new Event('resume')); await flush();
+  assert.equal(WebSocket.instances.length, 2);
+  assert.equal(a.statuses.at(-1).role, 'follower');
+  b.feed.stop(); await flush(); assert.equal(WebSocket.instances.length, 3);
+  WebSocket.instances[2].open();
+  assert.equal(a.statuses.at(-1).role, 'leader');
+  a.feed.stop(); await flush(); assert.equal(locks.held, false); assert.equal(clock.timers.size, 0);
+  aDocument.dispatchEvent(new Event('resume')); await flush(); assert.equal(WebSocket.instances.length, 3);
+});
+
+test('a leader shares normalized WS identifiers with a follower; matching REST backfill remains silent', async () => {
+  const clock = new Clock(), locks = new FakeLocks(), BroadcastChannel = channelFactory(), WebSocket = socketFactory();
+  let records = [];
+  const fetch = url => Promise.resolve(response(records.filter(message => url.includes(`codes=${message.code}`))));
+  const options = { locks, BroadcastChannel };
+  const a = harness({ clock, WebSocket, fetch, options }), b = harness({ clock, WebSocket, fetch, options });
+  a.feed.start(); await flush(); WebSocket.instances[0].open(); b.feed.start(); await flush();
+  const canonical = reportAt('6add9bfbc58757000704d541', clock.time);
+  const wire = { ...canonical, _id: canonical.id }; delete wire.id;
+  WebSocket.instances[0].message(wire); await flush();
+  assert.equal(a.store.snapshot().total, 1); assert.equal(b.store.snapshot().total, 1);
+  assert.equal(a.live.length, 1); assert.equal(b.live.length, 1); assert.equal(b.live[0].message.id, canonical.id);
+  records = [canonical]; await a.feed.refresh(); await flush(); WebSocket.instances[0].message(wire); await flush();
+  assert.equal(a.live.length, 1); assert.equal(b.live.length, 1); assert.equal(b.calls.length, 0);
+  a.feed.stop(); b.feed.stop(); await flush();
+});
 
 test('same-origin tabs share one leader socket, replay recent reports, and take over after leader stop', async () => {
   const clock = new Clock();
@@ -580,4 +945,96 @@ test('a failed log callback cannot stop initial history, live transport, or clea
   h.WebSocket.instances[0].message(report('next'));
   assert.equal(h.store.snapshot().total,2);assert.equal(h.live.length,1);
   h.feed.stop();assert.equal(h.clock.timers.size,0);
+});
+
+test('only the leader polls disconnected history and shares its posts silently with followers', async () => {
+  const clock = new Clock(), locks = new FakeLocks(), BroadcastChannel = channelFactory(), WebSocket = socketFactory();
+  const options = { locks, BroadcastChannel };
+  let reportFetches = 0;
+  const a = harness({ clock, WebSocket, options, fetch: url => Promise.resolve(response(url.includes('codes=561') ?
+    [report(`shared-poll-${++reportFetches}`)] : [])) });
+  const b = harness({ clock, WebSocket, options });
+  a.feed.start(); await flush(); b.feed.start(); await flush();
+  WebSocket.instances[0].error();
+  await clock.advance(30000);
+  assert.equal(a.calls.length, 4);
+  assert.equal(b.calls.length, 0);
+  assert.equal(a.store.snapshot().total, 2);
+  assert.equal(b.store.snapshot().total, 2);
+  assert.equal(a.live.length, 0);
+  assert.equal(b.live.length, 0);
+  assert.ok(b.history.flat().some(message => message.id === 'shared-poll-2'));
+  a.feed.stop(); b.feed.stop(); await flush();
+  assert.equal(clock.timers.size, 0);
+});
+
+// Exact public 561 IDs, source times and regions observed during 1025.mp4.
+// These are read-only regression records, never submitted to the provider.
+const CLIP_REPORTS = [
+  ['6add9bfbc58757000704d541',125,'15:04:43.874'],
+  ['6add9c02c58757000704d542',120,'15:04:50.770'],
+  ['6add9c0ac58757000704d543',150,'15:04:58.318'],
+  ['6add9c11c58757000704d545',242,'15:05:05.518'],
+  ['6add9c18c58757000704d546',120,'15:05:12.669'],
+  ['6add9c1cc58757000704d547',150,'15:05:16.372'],
+  ['6add9c1fc58757000704d548',150,'15:05:19.329'],
+  ['6add9c20c58757000704d549',125,'15:05:19.809'],
+  ['6add9c20c58757000704d54a',900,'15:05:20.193'],
+  ['6add9c21c58757000704d54b',125,'15:05:21.648'],
+  ['6add9c2bc58757000704d54c',150,'15:05:31.534'],
+  ['6add9c36c58757000704d54d',125,'15:05:42.504'],
+  ['6add9c40c58757000704d54e',142,'15:05:52.681'],
+].map(([id,area,time])=>({code:561,id,area,time:`2026/10/25 ${time}`}));
+
+test('an OPEN socket missing the recorded 13 reports repairs counts and raw logs through silent history only',async()=>{
+  const clock=new Clock();clock.time=Date.parse('2026-10-25T15:05:59+09:00');
+  const log=new CommunityLog({now:clock.now});let batches=0;
+  const h=harness({clock,fetch:url=>Promise.resolve(response(url.includes('codes=561')&&++batches>1?CLIP_REPORTS:[])),
+    options:{onHistory:messages=>log.ingestHistory(messages)}});
+  h.feed.start();await flush();h.WebSocket.instances[0].open();
+  assert.equal(h.statuses.at(-1).state,'live');assert.equal(h.store.snapshot().total,0);
+  await clock.advance(29999);assert.equal(h.calls.length,2);
+  await clock.advance(1);
+  assert.equal(h.calls.length,4);assert.equal(h.store.snapshot().total,13);assert.equal(log.snapshot().total,13);
+  assert.equal(h.WebSocket.instances.length,1);assert.equal(h.WebSocket.instances[0].readyState,1);
+  assert.equal(h.live.length,0);assert.ok(log.snapshot().entries.every(entry=>entry.history));
+  assert.equal(log.snapshot().entries[0].timeLabel,'15:05:52');
+  await clock.advance(30000);
+  assert.equal(h.store.snapshot().total,13);assert.equal(log.snapshot().total,13);
+  for(const message of CLIP_REPORTS)h.WebSocket.instances[0].message(message);
+  assert.equal(h.live.length,0,'Backfilled reports cannot later become fresh map, camera or bubble events.');
+  assert.equal(h.store.snapshot().total,13);assert.equal(log.snapshot().total,13);
+  h.feed.stop();assert.equal(clock.timers.size,0);
+});
+
+test('OPEN reconciliation and manual refresh preserve Retry-After without adding sockets',async()=>{
+  let requests=0;
+  const h=harness({fetch:()=>Promise.resolve(++requests>2&&requests<=4?response([],{status:429,retryAfter:'120'}):response())});
+  h.feed.start();await flush();h.WebSocket.instances[0].open();
+  await h.clock.advance(30000);assert.equal(h.calls.length,4);
+  await h.feed.refresh();await flush();assert.equal(h.calls.length,4);
+  await h.clock.advance(119999);assert.equal(h.calls.length,4);
+  await h.clock.advance(1);assert.equal(h.calls.length,6);assert.equal(h.WebSocket.instances.length,1);
+  assert.equal(h.statuses.at(-1).state,'live');
+  h.feed.stop();assert.equal(h.clock.timers.size,0);
+});
+
+test('only an OPEN leader reconciles; followers retain data and show upstream reconnecting and polling states',async()=>{
+  const clock=new Clock(),locks=new FakeLocks(),BroadcastChannel=channelFactory(),WebSocket=socketFactory();
+  let batches=0;const options={locks,BroadcastChannel};
+  const a=harness({clock,WebSocket,options,fetch:url=>Promise.resolve(response(url.includes('codes=561')?[report(`open-share-${++batches}`)]:[]))});
+  const b=harness({clock,WebSocket,options});
+  a.feed.start();await flush();WebSocket.instances[0].open();b.feed.start();await flush();
+  assert.equal(b.statuses.at(-1).state,'shared');assert.equal(b.statuses.at(-1).upstreamState,'live');
+  await clock.advance(30000);
+  assert.equal(a.calls.length,4);assert.equal(b.calls.length,0);assert.equal(WebSocket.instances.length,1);
+  assert.equal(a.store.snapshot().total,2);assert.equal(b.store.snapshot().total,2);
+  assert.equal(a.live.length,0);assert.equal(b.live.length,0);
+  WebSocket.instances[0].error();await flush();
+  assert.equal(b.statuses.at(-1).state,'reconnecting');assert.equal(b.statuses.at(-1).upstreamState,'reconnecting');
+  assert.equal(b.store.snapshot().total,2);
+  await a.feed.refresh();await flush();
+  assert.equal(b.statuses.at(-1).state,'polling');assert.equal(b.statuses.at(-1).upstreamState,'polling');
+  assert.equal(b.calls.length,0);assert.equal(b.store.snapshot().total,3);
+  a.feed.stop();b.feed.stop();await flush();assert.equal(clock.timers.size,0);
 });
